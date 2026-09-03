@@ -130,21 +130,30 @@ export default async function PropertyPage({
 
       <div className="container space-y-8 py-8">
         {/* KPIs */}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {[
-            { label: "Bookings", value: formatInt(a.totals.reservations) },
-            { label: "Room nights", value: formatInt(a.totals.roomNights) },
-            { label: "Room revenue", value: formatIDRFull(a.totals.revenue), sub: "from reservations" },
-            { label: "ADR", value: formatIDRFull(a.totals.adr) },
-          ].map((k) => (
-            <Card key={k.label} className="shadow-none">
-              <CardContent className="p-4">
-                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{k.label}</div>
-                <div className="mt-1 text-xl font-semibold tabular-nums">{k.value}</div>
-                {k.sub && <div className="text-xs text-muted-foreground">{k.sub}</div>}
-              </CardContent>
-            </Card>
-          ))}
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {[
+              { label: "Bookings", value: formatInt(a.totals.reservations), sub: "reservations" },
+              { label: "Room nights", value: formatInt(a.totals.roomNights), sub: a.reconciled ? "matched to daily" : "arrival basis" },
+              { label: "Room revenue", value: formatIDRFull(a.totals.revenue), sub: a.reconciled ? "matched to daily totals" : "from reservations" },
+              { label: "ADR", value: formatIDRFull(a.totals.adr) },
+            ].map((k) => (
+              <Card key={k.label} className="shadow-none">
+                <CardContent className="p-4">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{k.label}</div>
+                  <div className="mt-1 text-xl font-semibold tabular-nums">{k.value}</div>
+                  {k.sub && <div className="text-xs text-muted-foreground">{k.sub}</div>}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          {a.reconciled && (
+            <p className="text-xs text-muted-foreground">
+              Revenue &amp; room nights are reconciled to the authoritative daily room-revenue totals;
+              the mix (nationality · segment · agent · room type) comes from the reservation list.
+              Bookings are the reservation count.
+            </p>
+          )}
         </div>
 
         {/* Agent drill-down (takes priority when set) */}
@@ -189,7 +198,7 @@ export default async function PropertyPage({
               </div>
             </div>
             <p className="text-xs text-muted-foreground">Click an agent below to see that agent&apos;s own nationalities &amp; room types.</p>
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 lg:grid-cols-2">
               <DimTable title={`Agents in ${sd.segment}`} firstCol="Agent" rows={sd.agents} total={sd.totals.roomNights} limit={12} hrefFn={agentHref} />
               <DimTable title={`Nationalities in ${sd.segment}`} firstCol="Nationality" rows={sd.nationalities} total={sd.totals.roomNights} limit={12} nameFn={cname} />
               <DimTable title={`Room types in ${sd.segment}`} firstCol="Room type" rows={sd.roomTypes} total={sd.totals.roomNights} limit={12} />
