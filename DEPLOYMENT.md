@@ -120,15 +120,27 @@ yet. Everything up to here is invisible to the world and to your other sites.
    ```bash
    DOCROOT=/home/ethnicet/public_html/analytics.bluekarmasecrets.com
    cat > "$DOCROOT/.htaccess" <<'EOF'
+   DirectoryIndex disabled
    RewriteEngine On
-   RewriteRule ^(.*)$ http://127.0.0.1:3100/$1 [P,L]
+   RewriteRule ^ http://127.0.0.1:3100%{REQUEST_URI} [P,L]
    EOF
    chown ethnicet:ethnicet "$DOCROOT/.htaccess"
    ```
 
-3. **Enable SSL**: cPanel usually runs AutoSSL automatically within a few hours.
-   To issue immediately: WHM → *Manage AutoSSL → Run AutoSSL*, or cPanel →
-   *SSL/TLS Status* → *Run AutoSSL* for the new subdomain.
+   > `DirectoryIndex disabled` is **required**. Without it, a request to the bare
+   > `/` makes Apache's `mod_dir` look for an index file and it never reaches the
+   > proxy — so the homepage returns 404 while sub-paths like `/api/health` work.
+   > `%{REQUEST_URI}` preserves the exact path (same form the ads.* site uses).
+
+3. **SSL — via Cloudflare** (DNS for `bluekarmasecrets.com` is on Cloudflare):
+   set the new **`analytics`** DNS record to **Proxied (orange cloud)**, matching
+   the existing `dashboard` record. With the zone's **Flexible** SSL mode,
+   Cloudflare serves a valid certificate to visitors and forwards to the origin
+   over HTTP `:80` — so **no certificate is needed on the server itself**. A
+   grey-clouded record makes browsers hit the origin directly and show
+   `ERR_CERT_DATE_INVALID` / "Not Secure". (If the zone were Full / Full-strict,
+   the origin would additionally need a cert via cPanel AutoSSL or a Cloudflare
+   Origin Certificate.)
 
 4. **Verify live**:
    ```bash
