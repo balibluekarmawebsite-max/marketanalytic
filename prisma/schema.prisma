@@ -168,6 +168,22 @@ model MonthlyBenchmark {
 }
 
 // ---------------------------------------------------------------------------
+// Auth — internal team accounts (Milestone 9)
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String?
+  passwordHash String // bcrypt
+  role         String    @default("viewer") // 'admin' | 'viewer'
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// ---------------------------------------------------------------------------
 // Ingestion bookkeeping + learning dictionaries
 // ---------------------------------------------------------------------------
 
