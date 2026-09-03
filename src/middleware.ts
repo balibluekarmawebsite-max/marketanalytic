@@ -16,11 +16,23 @@ export async function middleware(req: NextRequest) {
   if (user) return NextResponse.next();
 
   // Not signed in → send to /login, remembering where they were headed.
+  const next = pathname + (req.nextUrl.search || "");
+  const nextParam = next && next !== "/" ? `?next=${encodeURIComponent(next)}` : "";
+
+  // Behind the Apache reverse proxy the app is reached on an internal address
+  // (127.0.0.1:3100). If we let the redirect resolve against that, the browser
+  // gets sent to http://localhost:3100/login and fails. So when the proxy tells
+  // us the real public host (X-Forwarded-Host), build an ABSOLUTE redirect to it.
+  const xfHost = req.headers.get("x-forwarded-host")?.split(",")[0].trim();
+  if (xfHost) {
+    const proto = req.headers.get("x-forwarded-proto")?.split(",")[0].trim() || "https";
+    return new NextResponse(null, { status: 307, headers: { Location: `${proto}://${xfHost}/login${nextParam}` } });
+  }
+
+  // Direct hit (local dev, no proxy) → same-origin relative redirect.
   const url = req.nextUrl.clone();
   url.pathname = "/login";
-  url.search = "";
-  const next = pathname + (req.nextUrl.search || "");
-  if (next && next !== "/") url.searchParams.set("next", next);
+  url.search = nextParam;
   return NextResponse.redirect(url);
 }
 
