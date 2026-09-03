@@ -14,6 +14,15 @@ export type SegmentDetail = {
   roomTypes: Dim[];
 };
 
+export type AgentDetail = {
+  agent: string;
+  segment: string; // dominant canonical segment for this agent
+  totals: Totals & { adr: number | null };
+  nationalities: Dim[];
+  roomTypes: Dim[];
+  byMonth: { month: string; reservations: number; roomNights: number }[];
+};
+
 export type PropertyAnalytics = {
   code: string;
   name: string;
@@ -30,6 +39,7 @@ export type PropertyAnalytics = {
   segTop: (Dim & { tops: { key: string; reservations: number }[] })[];
   matrix: { nat: string; byMonth: number[]; total: number }[];
   segmentDetail: SegmentDetail | null;
+  agentDetail: AgentDetail | null;
 };
 
 type Fact = {
@@ -66,6 +76,7 @@ export async function getPropertyAnalytics(
   code: string,
   period: string,
   seg?: string,
+  agent?: string,
 ): Promise<PropertyAnalytics | null> {
   const [prop, facts] = await Promise.all([
     prisma.property.findUnique({ where: { code } }),
@@ -119,9 +130,28 @@ export async function getPropertyAnalytics(
     };
   }
 
+  let agentDetail: AgentDetail | null = null;
+  if (agent) {
+    const ar = rows.filter((f) => (f.agent || "—") === agent);
+    const at = totalsOf(ar);
+    const segsForAgent = aggOf(ar, (f) => f.marketSegment);
+    agentDetail = {
+      agent,
+      segment: segsForAgent[0]?.key ?? "—",
+      totals: { ...at, adr: at.roomNights > 0 ? at.revenue / at.roomNights : null },
+      nationalities: aggOf(ar, (f) => f.nationality),
+      roomTypes: aggOf(ar, (f) => f.roomType),
+      byMonth: periodMonths.map((m) => {
+        const mr = ar.filter((f) => ym(f.month) === m);
+        const mt = totalsOf(mr);
+        return { month: m, reservations: mt.reservations, roomNights: mt.roomNights };
+      }),
+    };
+  }
+
   return {
     code, name: prop.name, city: prop.city, period, periodLabel,
     monthsAll, periodMonths, totals,
-    nationalities, segments, agents, roomTypes, segTop, matrix, segmentDetail,
+    nationalities, segments, agents, roomTypes, segTop, matrix, segmentDetail, agentDetail,
   };
 }

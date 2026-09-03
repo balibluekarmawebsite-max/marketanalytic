@@ -31,6 +31,7 @@ function DimTable({ title, firstCol, rows, total, limit = 12, nameFn, hrefFn }: 
   const rest = rows.slice(limit);
   const r = (a: number, b: number, c: number) => ({ a, b, c });
   const restAgg = rest.reduce((s, x) => r(s.a + x.reservations, s.b + x.roomNights, s.c + x.revenue), r(0, 0, 0));
+  const numTd = "py-1.5 text-right tabular-nums whitespace-nowrap";
   return (
     <Card>
       <CardHeader className="pb-2"><CardTitle className="text-base">{title}</CardTitle></CardHeader>
@@ -41,7 +42,7 @@ function DimTable({ title, firstCol, rows, total, limit = 12, nameFn, hrefFn }: 
               <tr className="border-b text-left text-[11px] uppercase tracking-wide text-muted-foreground">
                 <th className="py-1.5 font-medium">{firstCol}</th>
                 <th className="py-1.5 text-right font-medium">Bookings</th>
-                <th className="py-1.5 text-right font-medium">Room nts</th>
+                <th className="py-1.5 text-right font-medium">Nts</th>
                 <th className="py-1.5 text-right font-medium">Revenue</th>
                 <th className="py-1.5 text-right font-medium">%</th>
               </tr>
@@ -51,12 +52,12 @@ function DimTable({ title, firstCol, rows, total, limit = 12, nameFn, hrefFn }: 
                 const label = nameFn ? nameFn(row.key) : row.key;
                 return (
                   <tr key={row.key} className="border-b border-border/50">
-                    <td className="py-1.5">
+                    <td className="py-1.5 pr-2">
                       {hrefFn ? <Link href={hrefFn(row.key)} className="font-medium text-primary hover:underline">{label} →</Link> : label}
                     </td>
-                    <td className="py-1.5 text-right tabular-nums">{formatInt(row.reservations)}</td>
-                    <td className="py-1.5 text-right tabular-nums">{formatInt(row.roomNights)}</td>
-                    <td className="py-1.5 text-right tabular-nums">{row.revenue > 0 ? formatIDRFull(row.revenue) : "—"}</td>
+                    <td className={numTd}>{formatInt(row.reservations)}</td>
+                    <td className={numTd}>{formatInt(row.roomNights)}</td>
+                    <td className={numTd}>{row.revenue > 0 ? formatIDRFull(row.revenue) : "—"}</td>
                     <td className="py-1.5 text-right tabular-nums text-muted-foreground">{pct(row.roomNights, total)}</td>
                   </tr>
                 );
@@ -64,9 +65,9 @@ function DimTable({ title, firstCol, rows, total, limit = 12, nameFn, hrefFn }: 
               {rest.length > 0 && (
                 <tr className="text-muted-foreground">
                   <td className="py-1.5">+{rest.length} others</td>
-                  <td className="py-1.5 text-right tabular-nums">{formatInt(restAgg.a)}</td>
-                  <td className="py-1.5 text-right tabular-nums">{formatInt(restAgg.b)}</td>
-                  <td className="py-1.5 text-right tabular-nums">{restAgg.c > 0 ? formatIDRFull(restAgg.c) : "—"}</td>
+                  <td className={numTd}>{formatInt(restAgg.a)}</td>
+                  <td className={numTd}>{formatInt(restAgg.b)}</td>
+                  <td className={numTd}>{restAgg.c > 0 ? formatIDRFull(restAgg.c) : "—"}</td>
                   <td className="py-1.5 text-right tabular-nums">{pct(restAgg.b, total)}</td>
                 </tr>
               )}
@@ -82,20 +83,25 @@ export default async function PropertyPage({
   params, searchParams,
 }: {
   params: { code: string };
-  searchParams: { period?: string; seg?: string };
+  searchParams: { period?: string; seg?: string; agent?: string };
 }) {
   const code = params.code.toUpperCase();
   if (!VALID.includes(code)) notFound();
   const period = searchParams.period ?? "2026";
   const seg = searchParams.seg;
-  const a = await getPropertyAnalytics(code, period, seg);
+  const agent = searchParams.agent;
+  const a = await getPropertyAnalytics(code, period, seg, agent);
   if (!a) notFound();
 
   const accent = ACCENT[code] ?? "text-primary";
   const periods = [{ k: "2026", label: "2026 YTD" }, { k: "2025", label: "2025 YTD" }, { k: "all", label: "All time" }];
   const maxCell = Math.max(1, ...a.matrix.flatMap((m) => m.byMonth));
+  const ctx = agent ? `&agent=${encodeURIComponent(agent)}` : seg ? `&seg=${encodeURIComponent(seg)}` : "";
   const segHref = (k: string) => `/p/${code}?period=${period}&seg=${encodeURIComponent(k)}`;
-  const d = a.segmentDetail;
+  const agentHref = (k: string) => `/p/${code}?period=${period}&agent=${encodeURIComponent(k)}`;
+  const sd = a.segmentDetail;
+  const ad = a.agentDetail;
+  const maxAgentMonth = ad ? Math.max(1, ...ad.byMonth.map((m) => m.reservations)) : 1;
 
   return (
     <main className="min-h-screen bg-muted/30">
@@ -110,12 +116,12 @@ export default async function PropertyPage({
           </div>
           <div className="flex flex-wrap gap-1.5">
             {periods.map((p) => (
-              <Link key={p.k} href={`/p/${code}?period=${p.k}${seg ? `&seg=${encodeURIComponent(seg)}` : ""}`}
+              <Link key={p.k} href={`/p/${code}?period=${p.k}${ctx}`}
                 className={`rounded-md border px-2.5 py-1 text-xs ${period === p.k ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent"}`}>{p.label}</Link>
             ))}
             <span className="mx-1 w-px bg-border" />
             {a.monthsAll.slice().reverse().map((m) => (
-              <Link key={m} href={`/p/${code}?period=${m}${seg ? `&seg=${encodeURIComponent(seg)}` : ""}`}
+              <Link key={m} href={`/p/${code}?period=${m}${ctx}`}
                 className={`rounded-md border px-2 py-1 text-xs tabular-nums ${period === m ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent"}`}>{monthShort(m)} {m.slice(2, 4)}</Link>
             ))}
           </div>
@@ -141,25 +147,55 @@ export default async function PropertyPage({
           ))}
         </div>
 
-        {/* Segment drill-down */}
-        {d && (
-          <section className="space-y-3 rounded-xl border-2 border-primary/30 bg-background p-4">
+        {/* Agent drill-down (takes priority when set) */}
+        {ad ? (
+          <section className="space-y-3 rounded-xl border-2 border-primary/40 bg-background p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 className="text-lg font-semibold">
-                Segment: <span className={accent}>{d.segment}</span>
+                Agent: <span className={accent}>{ad.agent}</span>
+                <Badge variant="secondary" className="ml-2 align-middle">{ad.segment}</Badge>
               </h2>
               <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                <span className="tabular-nums">{formatInt(d.totals.reservations)} bookings · {formatInt(d.totals.roomNights)} nts · {formatIDRFull(d.totals.revenue)} · ADR {formatIDRFull(d.totals.adr)}</span>
+                <span className="tabular-nums">{formatInt(ad.totals.reservations)} bookings · {formatInt(ad.totals.roomNights)} nts · {formatIDRFull(ad.totals.revenue)} · ADR {formatIDRFull(ad.totals.adr)}</span>
+                <Link href={`/p/${code}?period=${period}${seg ? `&seg=${encodeURIComponent(seg)}` : ""}`} className="rounded-md border px-2 py-1 text-xs hover:bg-accent">✕ close</Link>
+              </div>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <DimTable title={`Nationalities · ${ad.agent}`} firstCol="Nationality" rows={ad.nationalities} total={ad.totals.roomNights} limit={15} nameFn={cname} />
+              <DimTable title={`Room types · ${ad.agent}`} firstCol="Room type" rows={ad.roomTypes} total={ad.totals.roomNights} limit={15} />
+            </div>
+            {ad.byMonth.length > 1 && (
+              <div>
+                <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Bookings by month</div>
+                <div className="flex items-end gap-1.5" style={{ height: 70 }}>
+                  {ad.byMonth.map((m) => (
+                    <div key={m.month} className="flex h-full flex-1 flex-col items-center justify-end gap-1">
+                      <span className="text-[9px] tabular-nums text-muted-foreground">{m.reservations || ""}</span>
+                      <div className="w-full rounded-t bg-primary/70" style={{ height: `${Math.max(2, (m.reservations / maxAgentMonth) * 80)}%` }} />
+                      <span className="text-[9px] text-muted-foreground">{monthShort(m.month)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+        ) : sd ? (
+          <section className="space-y-3 rounded-xl border-2 border-primary/30 bg-background p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-lg font-semibold">Segment: <span className={accent}>{sd.segment}</span></h2>
+              <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                <span className="tabular-nums">{formatInt(sd.totals.reservations)} bookings · {formatInt(sd.totals.roomNights)} nts · {formatIDRFull(sd.totals.revenue)} · ADR {formatIDRFull(sd.totals.adr)}</span>
                 <Link href={`/p/${code}?period=${period}`} className="rounded-md border px-2 py-1 text-xs hover:bg-accent">✕ close</Link>
               </div>
             </div>
+            <p className="text-xs text-muted-foreground">Click an agent below to see that agent&apos;s own nationalities &amp; room types.</p>
             <div className="grid gap-4 lg:grid-cols-3">
-              <DimTable title={`Agents in ${d.segment}`} firstCol="Agent" rows={d.agents} total={d.totals.roomNights} limit={12} />
-              <DimTable title={`Nationalities in ${d.segment}`} firstCol="Nationality" rows={d.nationalities} total={d.totals.roomNights} limit={12} nameFn={cname} />
-              <DimTable title={`Room types in ${d.segment}`} firstCol="Room type" rows={d.roomTypes} total={d.totals.roomNights} limit={12} />
+              <DimTable title={`Agents in ${sd.segment}`} firstCol="Agent" rows={sd.agents} total={sd.totals.roomNights} limit={12} hrefFn={agentHref} />
+              <DimTable title={`Nationalities in ${sd.segment}`} firstCol="Nationality" rows={sd.nationalities} total={sd.totals.roomNights} limit={12} nameFn={cname} />
+              <DimTable title={`Room types in ${sd.segment}`} firstCol="Room type" rows={sd.roomTypes} total={sd.totals.roomNights} limit={12} />
             </div>
           </section>
-        )}
+        ) : null}
 
         {/* Nationality × month */}
         {a.periodMonths.length > 1 && a.matrix.length > 0 && (
@@ -197,14 +233,17 @@ export default async function PropertyPage({
           <DimTable title="Nationality" firstCol="Nationality" rows={a.nationalities} total={a.totals.roomNights} nameFn={cname} />
           <div className="space-y-1">
             <DimTable title="Market segment" firstCol="Segment" rows={a.segments} total={a.totals.roomNights} limit={14} hrefFn={segHref} />
-            <p className="px-1 text-xs text-muted-foreground">Click a segment to see its agents &amp; nationalities.</p>
+            <p className="px-1 text-xs text-muted-foreground">Click a segment for its agents &amp; nationalities.</p>
           </div>
         </div>
 
-        {/* Room type + Agent */}
+        {/* Room type + Agent (agent rows clickable) */}
         <div className="grid gap-4 lg:grid-cols-2">
           <DimTable title="Room type" firstCol="Room type" rows={a.roomTypes} total={a.totals.roomNights} limit={14} />
-          <DimTable title="Agent / channel" firstCol="Agent" rows={a.agents} total={a.totals.roomNights} limit={14} />
+          <div className="space-y-1">
+            <DimTable title="Agent / channel" firstCol="Agent" rows={a.agents} total={a.totals.roomNights} limit={14} hrefFn={agentHref} />
+            <p className="px-1 text-xs text-muted-foreground">Click an agent for its own nationalities &amp; room types.</p>
+          </div>
         </div>
 
         {/* Nationality by segment */}
