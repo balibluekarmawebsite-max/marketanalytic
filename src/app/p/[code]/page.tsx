@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { DimTable, type DimRow } from "@/components/dim-table";
 import { getPropertyAnalytics, type Dim } from "@/lib/property-analytics";
 import { formatIDRFull, formatInt, monthShort } from "@/lib/utils";
 
@@ -21,63 +22,16 @@ const CC: Record<string, string> = {
   ISR: "Israel", DZA: "Algeria", UKR: "Ukraine", CZE: "Czechia", GRC: "Greece", MEX: "Mexico",
 };
 const cname = (c: string) => CC[c] ?? c;
-const pct = (part: number, whole: number) => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "—");
 
-function DimTable({ title, firstCol, rows, total, limit = 12, nameFn, hrefFn }: {
-  title: string; firstCol: string; rows: Dim[]; total: number; limit?: number;
-  nameFn?: (k: string) => string; hrefFn?: (k: string) => string;
-}) {
-  const shown = rows.slice(0, limit);
-  const rest = rows.slice(limit);
-  const r = (a: number, b: number, c: number) => ({ a, b, c });
-  const restAgg = rest.reduce((s, x) => r(s.a + x.reservations, s.b + x.roomNights, s.c + x.revenue), r(0, 0, 0));
-  const numTd = "py-1.5 text-right tabular-nums whitespace-nowrap";
-  return (
-    <Card>
-      <CardHeader className="pb-2"><CardTitle className="text-base">{title}</CardTitle></CardHeader>
-      <CardContent>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                <th className="py-1.5 font-medium">{firstCol}</th>
-                <th className="py-1.5 text-right font-medium">Bookings</th>
-                <th className="py-1.5 text-right font-medium">Nts</th>
-                <th className="py-1.5 text-right font-medium">Revenue</th>
-                <th className="py-1.5 text-right font-medium">%</th>
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((row) => {
-                const label = nameFn ? nameFn(row.key) : row.key;
-                return (
-                  <tr key={row.key} className="border-b border-border/50">
-                    <td className="py-1.5 pr-2">
-                      {hrefFn ? <Link href={hrefFn(row.key)} className="font-medium text-primary hover:underline">{label} →</Link> : label}
-                    </td>
-                    <td className={numTd}>{formatInt(row.reservations)}</td>
-                    <td className={numTd}>{formatInt(row.roomNights)}</td>
-                    <td className={numTd}>{row.revenue > 0 ? formatIDRFull(row.revenue) : "—"}</td>
-                    <td className="py-1.5 text-right tabular-nums text-muted-foreground">{pct(row.roomNights, total)}</td>
-                  </tr>
-                );
-              })}
-              {rest.length > 0 && (
-                <tr className="text-muted-foreground">
-                  <td className="py-1.5">+{rest.length} others</td>
-                  <td className={numTd}>{formatInt(restAgg.a)}</td>
-                  <td className={numTd}>{formatInt(restAgg.b)}</td>
-                  <td className={numTd}>{restAgg.c > 0 ? formatIDRFull(restAgg.c) : "—"}</td>
-                  <td className="py-1.5 text-right tabular-nums">{pct(restAgg.b, total)}</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+const toRows = (dims: Dim[], nameFn?: (k: string) => string, hrefFn?: (k: string) => string): DimRow[] =>
+  dims.map((d) => ({
+    key: d.key,
+    label: nameFn ? nameFn(d.key) : d.key,
+    href: hrefFn ? hrefFn(d.key) : undefined,
+    reservations: d.reservations,
+    roomNights: d.roomNights,
+    revenue: d.revenue,
+  }));
 
 export default async function PropertyPage({
   params, searchParams,
@@ -156,7 +110,7 @@ export default async function PropertyPage({
           )}
         </div>
 
-        {/* Agent drill-down (takes priority when set) */}
+        {/* Agent drill-down */}
         {ad ? (
           <section className="space-y-3 rounded-xl border-2 border-primary/40 bg-background p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -170,8 +124,8 @@ export default async function PropertyPage({
               </div>
             </div>
             <div className="grid gap-4 lg:grid-cols-2">
-              <DimTable title={`Nationalities · ${ad.agent}`} firstCol="Nationality" rows={ad.nationalities} total={ad.totals.roomNights} limit={15} nameFn={cname} />
-              <DimTable title={`Room types · ${ad.agent}`} firstCol="Room type" rows={ad.roomTypes} total={ad.totals.roomNights} limit={15} />
+              <DimTable title={`Nationalities · ${ad.agent}`} firstCol="Nationality" rows={toRows(ad.nationalities, cname)} total={ad.totals.roomNights} />
+              <DimTable title={`Room types · ${ad.agent}`} firstCol="Room type" rows={toRows(ad.roomTypes)} total={ad.totals.roomNights} />
             </div>
             {ad.byMonth.length > 1 && (
               <div>
@@ -199,9 +153,9 @@ export default async function PropertyPage({
             </div>
             <p className="text-xs text-muted-foreground">Click an agent below to see that agent&apos;s own nationalities &amp; room types.</p>
             <div className="grid gap-4 lg:grid-cols-2">
-              <DimTable title={`Agents in ${sd.segment}`} firstCol="Agent" rows={sd.agents} total={sd.totals.roomNights} limit={12} hrefFn={agentHref} />
-              <DimTable title={`Nationalities in ${sd.segment}`} firstCol="Nationality" rows={sd.nationalities} total={sd.totals.roomNights} limit={12} nameFn={cname} />
-              <DimTable title={`Room types in ${sd.segment}`} firstCol="Room type" rows={sd.roomTypes} total={sd.totals.roomNights} limit={12} />
+              <DimTable title={`Agents in ${sd.segment}`} firstCol="Agent" rows={toRows(sd.agents, undefined, agentHref)} total={sd.totals.roomNights} />
+              <DimTable title={`Nationalities in ${sd.segment}`} firstCol="Nationality" rows={toRows(sd.nationalities, cname)} total={sd.totals.roomNights} />
+              <DimTable title={`Room types in ${sd.segment}`} firstCol="Room type" rows={toRows(sd.roomTypes)} total={sd.totals.roomNights} />
             </div>
           </section>
         ) : null}
@@ -237,20 +191,20 @@ export default async function PropertyPage({
           </section>
         )}
 
-        {/* Nationality + Segment (segment rows clickable) */}
+        {/* Nationality + Segment */}
         <div className="grid gap-4 lg:grid-cols-2">
-          <DimTable title="Nationality" firstCol="Nationality" rows={a.nationalities} total={a.totals.roomNights} nameFn={cname} />
+          <DimTable title="Nationality" firstCol="Nationality" rows={toRows(a.nationalities, cname)} total={a.totals.roomNights} />
           <div className="space-y-1">
-            <DimTable title="Market segment" firstCol="Segment" rows={a.segments} total={a.totals.roomNights} limit={14} hrefFn={segHref} />
+            <DimTable title="Market segment" firstCol="Segment" rows={toRows(a.segments, undefined, segHref)} total={a.totals.roomNights} />
             <p className="px-1 text-xs text-muted-foreground">Click a segment for its agents &amp; nationalities.</p>
           </div>
         </div>
 
-        {/* Room type + Agent (agent rows clickable) */}
+        {/* Room type + Agent */}
         <div className="grid gap-4 lg:grid-cols-2">
-          <DimTable title="Room type" firstCol="Room type" rows={a.roomTypes} total={a.totals.roomNights} limit={14} />
+          <DimTable title="Room type" firstCol="Room type" rows={toRows(a.roomTypes)} total={a.totals.roomNights} />
           <div className="space-y-1">
-            <DimTable title="Agent / channel" firstCol="Agent" rows={a.agents} total={a.totals.roomNights} limit={14} hrefFn={agentHref} />
+            <DimTable title="Agent / channel" firstCol="Agent" rows={toRows(a.agents, undefined, agentHref)} total={a.totals.roomNights} />
             <p className="px-1 text-xs text-muted-foreground">Click an agent for its own nationalities &amp; room types.</p>
           </div>
         </div>
