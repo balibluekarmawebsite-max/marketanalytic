@@ -104,7 +104,8 @@ docker compose up --build
 ```
 
 This starts Postgres, runs a one-off `db-init` service (schema push + seed),
-then starts the app on <http://localhost:3000>.
+then starts the app on <http://localhost:3100> (the full-stack Docker app is
+published on **3100**, not 3000 — see "Deploying alongside your existing sites").
 
 ---
 
@@ -171,12 +172,62 @@ until their milestones.
 
 ---
 
-## Deploying to the VPS
+## Deploying alongside your existing sites (ads.* / dashboard.*)
 
-The same `docker compose up --build` works on the VPS. Put Nginx in front of
-port 3000 for TLS and your domain (same pattern as the ads dashboard). A
-dedicated production compose override and Nginx config can be added when we wire
-up auth (Milestone 9) and go live.
+**This stack is fully isolated from your existing projects and cannot interfere
+with them.** Concretely:
+
+- **Separate database.** It runs its own Postgres container with its own volume
+  (`blue-karma-market-analytics_pgdata`). It never connects to the database
+  behind ads.* or dashboard.*.
+- **Namespaced containers/networks/volumes.** The Compose project is named
+  `blue-karma-market-analytics`, so nothing shares a name with another project.
+- **Non-default, localhost-only ports.** The app publishes on `127.0.0.1:3100`
+  and Postgres on `127.0.0.1:5433` — different from the usual `3000` / `5432`,
+  and bound to localhost so they're never exposed publicly. Change them in
+  `.env` (`APP_PORT_BIND`, `DB_PORT_BIND`) if those happen to be taken.
+
+### Pre-flight check (run on the VPS before deploying)
+
+```bash
+# Are ports 3100 / 5433 free? (no output = free)
+sudo ss -tlnp | grep -E ':3100|:5433' || echo "3100 and 5433 are free"
+
+# What's already running, for reference:
+docker ps --format 'table {{.Names}}\t{{.Ports}}'
+```
+
+If either port is taken, set a different one in `.env` and re-run.
+
+### Deploy
+
+```bash
+cp .env.example .env          # then edit: set a strong POSTGRES_PASSWORD
+docker compose up --build -d  # db -> schema+seed -> app, on 127.0.0.1:3100
+```
+
+### Add a subdomain in Nginx
+
+Pick a new hostname (e.g. `analytics.bluekarmasecrets.com`) and add a **new,
+separate** server block — do not touch the existing ads/dashboard configs:
+
+```nginx
+server {
+    server_name analytics.bluekarmasecrets.com;
+    location / {
+        proxy_pass http://127.0.0.1:3100;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    # then: sudo certbot --nginx -d analytics.bluekarmasecrets.com
+}
+```
+
+`sudo nginx -t && sudo systemctl reload nginx` to apply. Because it's a new file
+and a new upstream port, your existing sites are unaffected.
 
 ---
 
