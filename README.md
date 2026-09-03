@@ -174,60 +174,18 @@ until their milestones.
 
 ## Deploying alongside your existing sites (ads.* / dashboard.*)
 
-**This stack is fully isolated from your existing projects and cannot interfere
-with them.** Concretely:
+**This deployment is additive only — it cannot interfere with your other sites.**
+It runs on its own port (`127.0.0.1:3100`), its own PM2 process
+(`market-analytics`), its own isolated database (`marketanalytic`, in your
+existing PostgreSQL 16), and its own subdomain. Nothing existing is edited.
 
-- **Separate database.** It runs its own Postgres container with its own volume
-  (`blue-karma-market-analytics_pgdata`). It never connects to the database
-  behind ads.* or dashboard.*.
-- **Namespaced containers/networks/volumes.** The Compose project is named
-  `blue-karma-market-analytics`, so nothing shares a name with another project.
-- **Non-default, localhost-only ports.** The app publishes on `127.0.0.1:3100`
-  and Postgres on `127.0.0.1:55432` — different from the usual `3000` / `5432`,
-  and bound to localhost so they're never exposed publicly. Change them in
-  `.env` (`APP_PORT_BIND`, `DB_PORT_BIND`) if those happen to be taken.
-
-### Pre-flight check (run on the VPS before deploying)
-
-```bash
-# Are ports 3100 / 55432 free? (no output = free)
-sudo ss -tlnp | grep -E ':3100|:55432' || echo "3100 and 55432 are free"
-
-# What's already running, for reference:
-docker ps --format 'table {{.Names}}\t{{.Ports}}'
-```
-
-If either port is taken, set a different one in `.env` and re-run.
-
-### Deploy
-
-```bash
-cp .env.example .env          # then edit: set a strong POSTGRES_PASSWORD
-docker compose up --build -d  # db -> schema+seed -> app, on 127.0.0.1:3100
-```
-
-### Add a subdomain in Nginx
-
-Pick a new hostname (e.g. `analytics.bluekarmasecrets.com`) and add a **new,
-separate** server block — do not touch the existing ads/dashboard configs:
-
-```nginx
-server {
-    server_name analytics.bluekarmasecrets.com;
-    location / {
-        proxy_pass http://127.0.0.1:3100;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-    # then: sudo certbot --nginx -d analytics.bluekarmasecrets.com
-}
-```
-
-`sudo nginx -t && sudo systemctl reload nginx` to apply. Because it's a new file
-and a new upstream port, your existing sites are unaffected.
+- **Blue Karma VPS (AlmaLinux + cPanel + Apache):** follow **[DEPLOYMENT.md](./DEPLOYMENT.md)**
+  — the native PM2 + Apache-`.htaccess` guide, tailored to this server. No Docker
+  needed; everything it requires (Node 20, PM2, PostgreSQL 16) is already installed.
+- **Any other host with Docker:** `cp .env.example .env` then
+  `docker compose up --build -d` brings up an isolated, namespaced stack
+  (project `blue-karma-market-analytics`) on `127.0.0.1:3100`, with its own
+  bundled Postgres on `127.0.0.1:55432`.
 
 ---
 
