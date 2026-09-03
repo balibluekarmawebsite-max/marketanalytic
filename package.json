@@ -13,6 +13,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "import:roomrev": "tsx scripts/import-roomrev.ts",
+    "import:arrival": "tsx scripts/import-arrival.ts",
     "postinstall": "prisma generate"
   },
   "prisma": {

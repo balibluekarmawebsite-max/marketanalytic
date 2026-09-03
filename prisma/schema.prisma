@@ -208,3 +208,22 @@ model SegmentAlias {
 
   @@unique([sourcePattern, canonicalSegment])
 }
+
+// Aggregated arrival-list facts — NO guest PII. Grain: property × stay-month ×
+// nationality × market segment × agent. Powers the per-property guest analytics
+// (nationality by month/MTD/YTD, nationality × segment, revenue × segment/agent).
+model ReservationFact {
+  id            String   @id @default(cuid())
+  propertyCode  String
+  month         DateTime // first day of the stay month (from the sheet name)
+  nationality   String? // raw code as reported (e.g. AUS, FRA)
+  marketSegment String? // canonical Blue Karma segment
+  agent         String? // cleaned company/agent label
+  reservations  Int      @default(0)
+  roomNights    Int      @default(0)
+  revenue       Decimal  @default(0) @db.Decimal(16, 2)
+
+  @@index([propertyCode, month])
+  @@index([propertyCode, nationality])
+  @@index([propertyCode, marketSegment])
+}

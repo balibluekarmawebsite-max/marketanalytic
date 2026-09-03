@@ -23,14 +23,22 @@ export function formatPct(value: number | null | undefined): string {
   return `${value.toFixed(1)}%`;
 }
 
-/** Compact IDR: Rp 3.38 B / Rp 2.9 M / Rp 450 K. */
-export function formatIDRCompact(value: number | null | undefined): string {
+/** Full IDR with thousands separators: Rp 59,330,383,050. */
+export function formatIDRFull(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
-  const abs = Math.abs(value);
-  if (abs >= 1e9) return `Rp ${(value / 1e9).toFixed(2)} B`;
-  if (abs >= 1e6) return `Rp ${(value / 1e6).toFixed(1)} M`;
-  if (abs >= 1e3) return `Rp ${Math.round(value / 1e3)} K`;
-  return `Rp ${Math.round(value)}`;
+  return `Rp ${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.round(value))}`;
+}
+
+/** Grouped number without the currency prefix (for tight chart labels). */
+export function formatNum0(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.round(value));
+}
+
+/** Percentage with 2 decimals: 53.13%. */
+export function formatPct2(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return `${value.toFixed(2)}%`;
 }
 
 /** Integer with thousands separators. */

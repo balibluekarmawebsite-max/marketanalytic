@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   Card,
   CardContent,
@@ -7,7 +8,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getOverview, type PropertyPerf } from "@/lib/analytics";
-import { formatIDRCompact, formatInt, formatPct, monthShort } from "@/lib/utils";
+import { formatIDRFull, formatInt, formatNum0, formatPct2, monthShort } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -17,30 +18,30 @@ const ACCENT: Record<string, { bar: string; text: string }> = {
   BKV: { bar: "bg-bkv", text: "text-bkv" },
 };
 
-/** Dependency-free vertical bar chart (labels row kept separate so bar % heights
- *  resolve against a definite-height track). */
 function Bars({ data, color = "bg-primary" }: { data: { label: string; value: number }[]; color?: string }) {
   const max = Math.max(1, ...data.map((d) => d.value));
   return (
-    <div>
-      <div className="flex items-end gap-1.5" style={{ height: 170 }}>
-        {data.map((d) => (
-          <div key={d.label} className="flex h-full flex-1 flex-col items-center justify-end gap-1">
-            <span className="text-[9px] tabular-nums text-muted-foreground">{formatIDRCompact(d.value)}</span>
-            <div
-              className={`w-full rounded-t ${color}`}
-              style={{ height: `${Math.max(2, (d.value / max) * 88)}%` }}
-              title={`${d.label}: ${formatIDRCompact(d.value)}`}
-            />
-          </div>
-        ))}
-      </div>
-      <div className="mt-1 flex gap-1.5">
-        {data.map((d) => (
-          <div key={d.label} className="flex-1 text-center text-[10px] text-muted-foreground">
-            {d.label}
-          </div>
-        ))}
+    <div className="overflow-x-auto">
+      <div style={{ minWidth: 760 }}>
+        <div className="flex items-end gap-1.5" style={{ height: 170 }}>
+          {data.map((d) => (
+            <div key={d.label} className="flex h-full flex-1 flex-col items-center justify-end gap-1">
+              <span className="text-[9px] tabular-nums text-muted-foreground">{formatNum0(d.value)}</span>
+              <div
+                className={`w-full rounded-t ${color}`}
+                style={{ height: `${Math.max(2, (d.value / max) * 88)}%` }}
+                title={`${d.label}: ${formatIDRFull(d.value)}`}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="mt-1 flex gap-1.5">
+          {data.map((d) => (
+            <div key={d.label} className="flex-1 text-center text-[10px] text-muted-foreground">
+              {d.label}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -66,7 +67,7 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
     <Card className="shadow-none">
       <CardContent className="p-4">
         <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
-        <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
+        <div className="mt-1 text-xl font-semibold tabular-nums">{value}</div>
         {sub && <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
@@ -92,23 +93,23 @@ function PropertyCard({ p }: { p: PropertyPerf }) {
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
               {lf ? `${monthShort(lf.month)} revenue` : "Revenue"}
             </div>
-            <div className="text-lg font-semibold tabular-nums">{formatIDRCompact(lf?.revenue)}</div>
+            <div className="text-sm font-semibold tabular-nums">{formatIDRFull(lf?.revenue)}</div>
           </div>
           <div>
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">ADR</div>
-            <div className="text-lg font-semibold tabular-nums">{formatIDRCompact(lf?.adr)}</div>
+            <div className="text-sm font-semibold tabular-nums">{formatIDRFull(lf?.adr)}</div>
           </div>
           <div>
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Room nights</div>
-            <div className="text-lg font-semibold tabular-nums">{formatInt(lf?.roomNights)}</div>
+            <div className="text-sm font-semibold tabular-nums">{formatInt(lf?.roomNights)}</div>
           </div>
           <div>
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Occupancy</div>
-            <div className="text-lg font-semibold tabular-nums">
+            <div className="text-sm font-semibold tabular-nums">
               {lf?.occupancyPct != null ? (
-                formatPct(lf.occupancyPct)
+                formatPct2(lf.occupancyPct)
               ) : (
-                <span className="text-sm font-normal text-amber-600">needs room count</span>
+                <span className="text-xs font-normal text-amber-600">needs room count</span>
               )}
             </div>
           </div>
@@ -116,10 +117,16 @@ function PropertyCard({ p }: { p: PropertyPerf }) {
         <div>
           <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
             <span>Monthly revenue</span>
-            <span>YTD {formatIDRCompact(p.ytdRevenue)}</span>
+            <span className="tabular-nums normal-case">YTD {formatIDRFull(p.ytdRevenue)}</span>
           </div>
           <Sparkbars data={p.months.map((m) => m.revenue)} color={accent.bar} />
         </div>
+        <Link
+          href={`/p/${p.code}`}
+          className={`inline-flex items-center gap-1 text-sm font-medium ${accent.text} hover:underline`}
+        >
+          Guest analytics →
+        </Link>
       </CardContent>
     </Card>
   );
@@ -169,14 +176,12 @@ export default async function Home() {
             <CardHeader>
               <CardTitle className="text-base">No performance data yet</CardTitle>
               <CardDescription>
-                Import daily room-revenue with{" "}
-                <code className="rounded bg-muted px-1">npx tsx scripts/import-roomrev.ts &lt;file&gt;</code>.
+                Load daily revenue, then refresh.
               </CardDescription>
             </CardHeader>
           </Card>
         ) : (
           <>
-            {/* YTD KPI strip */}
             <section className="space-y-3">
               <div className="flex items-baseline justify-between">
                 <h2 className="text-lg font-semibold">Group performance · 2026 YTD</h2>
@@ -184,15 +189,14 @@ export default async function Home() {
                   {overview!.dataFrom} → {overview!.dataTo} · {formatInt(overview!.rowCount)} daily records
                 </span>
               </div>
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                <Kpi label="Room revenue YTD" value={formatIDRCompact(overview!.ytdRevenue)} sub="3 properties" />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Kpi label="Room revenue YTD" value={formatIDRFull(overview!.ytdRevenue)} sub="3 properties" />
                 <Kpi label="Room nights YTD" value={formatInt(overview!.ytdRoomNights)} />
-                <Kpi label="Blended ADR" value={formatIDRCompact(overview!.ytdAdr)} sub="revenue ÷ room nights" />
+                <Kpi label="Blended ADR" value={formatIDRFull(overview!.ytdAdr)} sub="revenue ÷ room nights" />
                 <Kpi label="Properties" value="3" sub="BKDS · BKDU · BKV" />
               </div>
             </section>
 
-            {/* Overall monthly revenue */}
             <section className="space-y-3">
               <h2 className="text-lg font-semibold">Group room revenue by month</h2>
               <Card>
@@ -202,7 +206,6 @@ export default async function Home() {
               </Card>
             </section>
 
-            {/* Property comparison */}
             <section className="space-y-3">
               <h2 className="text-lg font-semibold">Property performance</h2>
               <div className="grid gap-4 md:grid-cols-3">
@@ -214,19 +217,6 @@ export default async function Home() {
                 Headline figures are each property&apos;s latest closed month. Occupancy needs the
                 room count per property — BKDU (38) is set; send BKDS &amp; BKV counts to unlock theirs.
               </p>
-            </section>
-
-            {/* What's next */}
-            <section className="space-y-3">
-              <h2 className="text-lg font-semibold">Coming next</h2>
-              <Card>
-                <CardContent className="grid gap-2 p-4 text-sm text-muted-foreground sm:grid-cols-2">
-                  <div>• Guest analytics from the arrival list — nationality, segment mix, repeater share, ALOS</div>
-                  <div>• Occupancy &amp; RevPAR for BKDS / BKV (need room counts)</div>
-                  <div>• Segment budget-vs-actual (from the Market Segment sheets)</div>
-                  <div>• In-app drag-and-drop upload (so you load files yourself)</div>
-                </CardContent>
-              </Card>
             </section>
           </>
         )}

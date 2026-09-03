@@ -76,7 +76,8 @@ export function parseReservationSheet(
     const y2 = sheetName.match(/[,'’]\s*(\d{2})\b/) || sheetName.match(/\b(\d{2})\b/);
     if (y2) year = 2000 + parseInt(y2[1], 10);
   }
-  if (!year) year = 2025; // safe default; the workbook spans 2025–2026
+  // 2025 sheets are always explicitly labeled "2025"; an undated sheet is 2026.
+  if (!year) year = 2026;
 
   return { property, year, month };
 }
