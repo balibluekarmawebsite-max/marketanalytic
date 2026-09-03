@@ -52,6 +52,7 @@ const RULES: Rule[] = [
   { pattern: "ctrip", segment: "OTA", priority: 25 },
   { pattern: "trip.com", segment: "OTA", priority: 25 },
   { pattern: "klook", segment: "OTA", priority: 25 },
+  { pattern: "tablet", segment: "OTA", priority: 25 },
 ];
 
 const DEFAULT_SEGMENT = "Offline Travel Agent";
