@@ -121,12 +121,20 @@ function PropertyCard({ p }: { p: PropertyPerf }) {
           </div>
           <Sparkbars data={p.months.map((m) => m.revenue)} color={accent.bar} />
         </div>
-        <Link
-          href={`/p/${p.code}`}
-          className={`inline-flex items-center gap-1 text-sm font-medium ${accent.text} hover:underline`}
-        >
-          Guest analytics →
-        </Link>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <Link
+            href={`/p/${p.code}`}
+            className={`inline-flex items-center gap-1 text-sm font-medium ${accent.text} hover:underline`}
+          >
+            Guest analytics →
+          </Link>
+          <Link
+            href={`/budget?p=${p.code}`}
+            className={`inline-flex items-center gap-1 text-sm font-medium ${accent.text} hover:underline`}
+          >
+            Budget vs actual →
+          </Link>
+        </div>
       </CardContent>
     </Card>
   );
@@ -168,6 +176,9 @@ export default async function Home() {
           <p className="text-sm text-muted-foreground">
             Revenue-management dashboard for Blue Karma Dijiwa Group — Seminyak, Ubud &amp; Village.
           </p>
+          <nav className="mt-1 flex flex-wrap gap-2 text-sm">
+            <Link href="/budget" className="rounded-md border px-2.5 py-1 font-medium hover:bg-accent">Budget vs actual →</Link>
+          </nav>
         </div>
       </header>
 

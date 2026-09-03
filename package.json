@@ -15,6 +15,7 @@
     "import:roomrev": "tsx scripts/import-roomrev.ts",
     "import:arrival": "tsx scripts/import-arrival.ts",
     "import:pickup": "tsx scripts/import-pickup.ts",
+    "import:segment": "tsx scripts/import-segment.ts",
     "postinstall": "prisma generate"
   },
   "prisma": {
