@@ -183,15 +183,15 @@ with them.** Concretely:
 - **Namespaced containers/networks/volumes.** The Compose project is named
   `blue-karma-market-analytics`, so nothing shares a name with another project.
 - **Non-default, localhost-only ports.** The app publishes on `127.0.0.1:3100`
-  and Postgres on `127.0.0.1:5433` — different from the usual `3000` / `5432`,
+  and Postgres on `127.0.0.1:55432` — different from the usual `3000` / `5432`,
   and bound to localhost so they're never exposed publicly. Change them in
   `.env` (`APP_PORT_BIND`, `DB_PORT_BIND`) if those happen to be taken.
 
 ### Pre-flight check (run on the VPS before deploying)
 
 ```bash
-# Are ports 3100 / 5433 free? (no output = free)
-sudo ss -tlnp | grep -E ':3100|:5433' || echo "3100 and 5433 are free"
+# Are ports 3100 / 55432 free? (no output = free)
+sudo ss -tlnp | grep -E ':3100|:55432' || echo "3100 and 55432 are free"
 
 # What's already running, for reference:
 docker ps --format 'table {{.Names}}\t{{.Ports}}'

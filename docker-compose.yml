@@ -10,7 +10,7 @@
 #   * Its Postgres is a private container with its own volume — it never touches
 #     any other database.
 #   * Host ports bind to 127.0.0.1 only (never public) and use NON-default
-#     numbers (3100, 5433) so they can't clash with apps already on 3000/5432.
+#     numbers (3100, 55432) so they can't clash with apps already on 3000/5432.
 #     Public access is via Nginx -> 127.0.0.1:3100 (see README).
 name: blue-karma-market-analytics
 
@@ -22,12 +22,12 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-marketanalytic}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-marketanalytic}
       POSTGRES_DB: ${POSTGRES_DB:-marketanalytic}
-    # Published on localhost:5433 by default so it can't clash with any Postgres
+    # Published on localhost:55432 by default so it can't clash with any Postgres
     # already on :5432, and is never reachable from outside the server. In a
     # pure-compose production deploy you can delete these two lines entirely —
     # the app reaches the database privately as `db:5432` over the compose network.
     ports:
-      - "${DB_PORT_BIND:-127.0.0.1:5433}:5432"
+      - "${DB_PORT_BIND:-127.0.0.1:55432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
