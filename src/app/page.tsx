@@ -6,286 +6,235 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { prisma } from "@/lib/prisma";
+import { getOverview, type PropertyPerf } from "@/lib/analytics";
+import { formatIDRCompact, formatInt, formatPct, monthShort } from "@/lib/utils";
 
-// This page reads seeded Property rows from Postgres, so render it dynamically
-// rather than at build time (when no database is available).
 export const dynamic = "force-dynamic";
 
-type PropertyRow = {
-  code: string;
-  name: string;
-  city: string | null;
-  roomsAvailable: number | null;
-  currency: string;
+const ACCENT: Record<string, { bar: string; text: string }> = {
+  BKDS: { bar: "bg-bkds", text: "text-bkds" },
+  BKDU: { bar: "bg-bkdu", text: "text-bkdu" },
+  BKV: { bar: "bg-bkv", text: "text-bkv" },
 };
 
-async function getProperties(): Promise<{
-  properties: PropertyRow[];
-  dbError: string | null;
-}> {
-  try {
-    const properties = await prisma.property.findMany({
-      orderBy: { code: "asc" },
-    });
-    return { properties, dbError: null };
-  } catch (error) {
-    return {
-      properties: [],
-      dbError: error instanceof Error ? error.message : "unknown error",
-    };
-  }
+/** Dependency-free vertical bar chart (labels row kept separate so bar % heights
+ *  resolve against a definite-height track). */
+function Bars({ data, color = "bg-primary" }: { data: { label: string; value: number }[]; color?: string }) {
+  const max = Math.max(1, ...data.map((d) => d.value));
+  return (
+    <div>
+      <div className="flex items-end gap-1.5" style={{ height: 170 }}>
+        {data.map((d) => (
+          <div key={d.label} className="flex h-full flex-1 flex-col items-center justify-end gap-1">
+            <span className="text-[9px] tabular-nums text-muted-foreground">{formatIDRCompact(d.value)}</span>
+            <div
+              className={`w-full rounded-t ${color}`}
+              style={{ height: `${Math.max(2, (d.value / max) * 88)}%` }}
+              title={`${d.label}: ${formatIDRCompact(d.value)}`}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 flex gap-1.5">
+        {data.map((d) => (
+          <div key={d.label} className="flex-1 text-center text-[10px] text-muted-foreground">
+            {d.label}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
-const FORWARD_LOOKING = [
-  {
-    label: "Pickup (last 24h / 7d)",
-    hint: "Rooms & revenue added for future dates",
-    milestone: "M10",
-  },
-  {
-    label: "On-the-books occupancy",
-    hint: "Next 30 / 60 / 90 days, STLY overlay",
-    milestone: "M10",
-  },
-  {
-    label: "Booking pace vs STLY",
-    hint: "OTB now vs same-days-out last year",
-    milestone: "M10",
-  },
-];
+function Sparkbars({ data, color }: { data: number[]; color: string }) {
+  const max = Math.max(1, ...data);
+  return (
+    <div className="flex items-end gap-0.5" style={{ height: 34 }}>
+      {data.map((v, i) => (
+        <div
+          key={i}
+          className={`flex-1 rounded-sm ${color}`}
+          style={{ height: `${Math.max(6, (v / max) * 100)}%`, opacity: v > 0 ? 1 : 0.15 }}
+        />
+      ))}
+    </div>
+  );
+}
 
-const KPI_STRIP = [
-  "Revenue MTD",
-  "Room nights MTD",
-  "ADR",
-  "Occupancy %",
-  "Unique guests",
-  "% Repeater",
-  "Top segment",
-  "Top nationality",
-];
+function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <Card className="shadow-none">
+      <CardContent className="p-4">
+        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+        <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
+        {sub && <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>}
+      </CardContent>
+    </Card>
+  );
+}
 
-const ROADMAP = [
-  { n: 1, label: "Setup — Next.js, Prisma, Postgres, Docker, seeds", done: true },
-  { n: 2, label: "Upload + parse foundation", done: false },
-  { n: 3, label: "Sheet-name parser (property / month / year)", done: false },
-  { n: 4, label: "Archetype A ingest — reservations", done: false },
-  { n: 5, label: "Guest analytics dashboard", done: false },
-  { n: 6, label: "Archetype B ingest + base KPIs", done: false },
-  { n: 7, label: "Archetype C — segment budget vs actual", done: false },
-  { n: 8, label: "Property comparison + global filters", done: false },
-  { n: 9, label: "Auth + user management", done: false },
-  { n: 10, label: "Archetype D — pickup / pace", done: false },
-  { n: 11, label: "Export + monthly PDF report", done: false },
-  { n: 12, label: "AI insights (Groq, EN/ID)", done: false },
-];
-
-const PROPERTY_ACCENT: Record<string, string> = {
-  BKDS: "bg-bkds",
-  BKDU: "bg-bkdu",
-  BKV: "bg-bkv",
-};
+function PropertyCard({ p }: { p: PropertyPerf }) {
+  const accent = ACCENT[p.code] ?? { bar: "bg-primary", text: "text-foreground" };
+  const lf = p.latestFull;
+  return (
+    <Card className="relative overflow-hidden">
+      <div className={`absolute inset-y-0 left-0 w-1 ${accent.bar}`} />
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">{p.code}</CardTitle>
+          <Badge variant="secondary">{p.city ?? "—"}</Badge>
+        </div>
+        <CardDescription>{p.name}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              {lf ? `${monthShort(lf.month)} revenue` : "Revenue"}
+            </div>
+            <div className="text-lg font-semibold tabular-nums">{formatIDRCompact(lf?.revenue)}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">ADR</div>
+            <div className="text-lg font-semibold tabular-nums">{formatIDRCompact(lf?.adr)}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Room nights</div>
+            <div className="text-lg font-semibold tabular-nums">{formatInt(lf?.roomNights)}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Occupancy</div>
+            <div className="text-lg font-semibold tabular-nums">
+              {lf?.occupancyPct != null ? (
+                formatPct(lf.occupancyPct)
+              ) : (
+                <span className="text-sm font-normal text-amber-600">needs room count</span>
+              )}
+            </div>
+          </div>
+        </div>
+        <div>
+          <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
+            <span>Monthly revenue</span>
+            <span>YTD {formatIDRCompact(p.ytdRevenue)}</span>
+          </div>
+          <Sparkbars data={p.months.map((m) => m.revenue)} color={accent.bar} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default async function Home() {
-  const { properties, dbError } = await getProperties();
+  let overview: Awaited<ReturnType<typeof getOverview>> | null = null;
+  let dbError: string | null = null;
+  try {
+    overview = await getOverview();
+  } catch (e) {
+    dbError = e instanceof Error ? e.message : "unknown error";
+  }
+
+  const hasData = overview && overview.rowCount > 0;
+  const overallMonthly =
+    overview?.monthLabels.map((m, i) => ({
+      label: monthShort(m),
+      value: overview!.properties.reduce((s, p) => s + (p.months[i]?.revenue ?? 0), 0),
+    })) ?? [];
 
   return (
     <main className="min-h-screen bg-muted/30">
-      {/* Header */}
       <header className="border-b bg-background">
         <div className="container flex flex-col gap-1 py-6">
           <div className="flex items-center gap-3">
             <div className="h-8 w-8 rounded-md bg-primary" />
-            <h1 className="text-xl font-semibold tracking-tight">
-              Blue Karma · Market Analytics
-            </h1>
-            <Badge variant="secondary">Milestone 1</Badge>
+            <h1 className="text-xl font-semibold tracking-tight">Blue Karma · Market Analytics</h1>
+            {hasData ? <Badge>Live data</Badge> : <Badge variant="secondary">Milestone 1</Badge>}
           </div>
           <p className="text-sm text-muted-foreground">
-            Revenue-management dashboard for Blue Karma Dijiwa Group — Seminyak,
-            Ubud &amp; Village.
+            Revenue-management dashboard for Blue Karma Dijiwa Group — Seminyak, Ubud &amp; Village.
           </p>
         </div>
       </header>
 
       <div className="container space-y-8 py-8">
-        {/* DB status banner */}
         {dbError ? (
           <Card className="border-destructive/50">
             <CardHeader>
-              <CardTitle className="text-destructive">
-                Database not connected yet
-              </CardTitle>
+              <CardTitle className="text-destructive">Database not connected</CardTitle>
+              <CardDescription>{dbError}</CardDescription>
+            </CardHeader>
+          </Card>
+        ) : !hasData ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">No performance data yet</CardTitle>
               <CardDescription>
-                The app is running, but it can&apos;t reach Postgres. Start the
-                database and seed it, then refresh:
-                <code className="mt-2 block rounded bg-muted p-2 text-xs">
-                  docker compose up -d db
-                  <br />
-                  npm run db:push &amp;&amp; npm run db:seed
-                </code>
-                <span className="mt-2 block text-xs opacity-70">
-                  ({dbError})
-                </span>
+                Import daily room-revenue with{" "}
+                <code className="rounded bg-muted px-1">npx tsx scripts/import-roomrev.ts &lt;file&gt;</code>.
               </CardDescription>
             </CardHeader>
           </Card>
         ) : (
-          <Card className="border-emerald-500/40">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
-                Setup verified
-              </CardTitle>
-              <CardDescription>
-                App is live and connected to Postgres. {properties.length}{" "}
-                properties seeded. The dashboards below are scaffolding —
-                real numbers land as each milestone ships.
-              </CardDescription>
-            </CardHeader>
-          </Card>
-        )}
+          <>
+            {/* YTD KPI strip */}
+            <section className="space-y-3">
+              <div className="flex items-baseline justify-between">
+                <h2 className="text-lg font-semibold">Group performance · 2026 YTD</h2>
+                <span className="text-xs text-muted-foreground">
+                  {overview!.dataFrom} → {overview!.dataTo} · {formatInt(overview!.rowCount)} daily records
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <Kpi label="Room revenue YTD" value={formatIDRCompact(overview!.ytdRevenue)} sub="3 properties" />
+                <Kpi label="Room nights YTD" value={formatInt(overview!.ytdRoomNights)} />
+                <Kpi label="Blended ADR" value={formatIDRCompact(overview!.ytdAdr)} sub="revenue ÷ room nights" />
+                <Kpi label="Properties" value="3" sub="BKDS · BKDU · BKV" />
+              </div>
+            </section>
 
-        {/* Persistent KPI strip (placeholder) */}
-        <section>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
-            {KPI_STRIP.map((kpi) => (
-              <Card key={kpi} className="shadow-none">
-                <CardContent className="p-3">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                    {kpi}
-                  </div>
-                  <div className="mt-1 text-lg font-semibold text-muted-foreground/50">
-                    —
-                  </div>
+            {/* Overall monthly revenue */}
+            <section className="space-y-3">
+              <h2 className="text-lg font-semibold">Group room revenue by month</h2>
+              <Card>
+                <CardContent className="pt-6">
+                  <Bars data={overallMonthly} color="bg-primary/80" />
                 </CardContent>
               </Card>
-            ))}
-          </div>
-        </section>
+            </section>
 
-        {/* Daily forward-looking — the three numbers that matter daily */}
-        <section className="space-y-3">
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-lg font-semibold">Daily forward-looking</h2>
-            <span className="text-xs text-muted-foreground">
-              The only three metrics that need daily attention
-            </span>
-          </div>
-          <div className="grid gap-4 md:grid-cols-3">
-            {FORWARD_LOOKING.map((m) => (
-              <Card key={m.label} className="relative overflow-hidden">
-                <div className="absolute inset-x-0 top-0 h-1 bg-primary/80" />
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-base">{m.label}</CardTitle>
-                    <Badge variant="outline" className="text-[10px]">
-                      {m.milestone}
-                    </Badge>
-                  </div>
-                  <CardDescription>{m.hint}</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-muted-foreground/40">
-                    —
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </section>
-
-        {/* Property comparison — seeded from the database */}
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold">Properties</h2>
-          <div className="grid gap-4 md:grid-cols-3">
-            {properties.length === 0 && !dbError ? (
-              <p className="text-sm text-muted-foreground">
-                No properties seeded yet. Run{" "}
-                <code className="rounded bg-muted px-1">npm run db:seed</code>.
-              </p>
-            ) : (
-              properties.map((p) => (
-                <Card key={p.code} className="relative overflow-hidden">
-                  <div
-                    className={`absolute inset-y-0 left-0 w-1 ${
-                      PROPERTY_ACCENT[p.code] ?? "bg-primary"
-                    }`}
-                  />
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-base">{p.code}</CardTitle>
-                      <Badge variant="secondary">{p.city ?? "—"}</Badge>
-                    </div>
-                    <CardDescription>{p.name}</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-1 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">
-                        Rooms available
-                      </span>
-                      <span className="font-medium">
-                        {p.roomsAvailable ?? (
-                          <span className="text-amber-600">needs count</span>
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Currency</span>
-                      <span className="font-medium">{p.currency}</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
-            )}
-          </div>
-        </section>
-
-        {/* Build roadmap */}
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold">Build roadmap</h2>
-          <Card>
-            <CardContent className="p-0">
-              <ul className="divide-y">
-                {ROADMAP.map((step) => (
-                  <li
-                    key={step.n}
-                    className="flex items-center gap-3 px-4 py-2.5 text-sm"
-                  >
-                    <span
-                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
-                        step.done
-                          ? "bg-emerald-500 text-white"
-                          : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      {step.done ? "✓" : step.n}
-                    </span>
-                    <span
-                      className={
-                        step.done ? "font-medium" : "text-muted-foreground"
-                      }
-                    >
-                      {step.label}
-                    </span>
-                    {step.done && (
-                      <Badge variant="outline" className="ml-auto text-[10px]">
-                        done
-                      </Badge>
-                    )}
-                  </li>
+            {/* Property comparison */}
+            <section className="space-y-3">
+              <h2 className="text-lg font-semibold">Property performance</h2>
+              <div className="grid gap-4 md:grid-cols-3">
+                {overview!.properties.map((p) => (
+                  <PropertyCard key={p.code} p={p} />
                 ))}
-              </ul>
-            </CardContent>
-          </Card>
-        </section>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Headline figures are each property&apos;s latest closed month. Occupancy needs the
+                room count per property — BKDU (38) is set; send BKDS &amp; BKV counts to unlock theirs.
+              </p>
+            </section>
+
+            {/* What's next */}
+            <section className="space-y-3">
+              <h2 className="text-lg font-semibold">Coming next</h2>
+              <Card>
+                <CardContent className="grid gap-2 p-4 text-sm text-muted-foreground sm:grid-cols-2">
+                  <div>• Guest analytics from the arrival list — nationality, segment mix, repeater share, ALOS</div>
+                  <div>• Occupancy &amp; RevPAR for BKDS / BKV (need room counts)</div>
+                  <div>• Segment budget-vs-actual (from the Market Segment sheets)</div>
+                  <div>• In-app drag-and-drop upload (so you load files yourself)</div>
+                </CardContent>
+              </Card>
+            </section>
+          </>
+        )}
       </div>
 
       <footer className="border-t bg-background py-6">
         <div className="container text-xs text-muted-foreground">
-          Blue Karma Dijiwa Group · Internal revenue-management tool · Built with
-          Claude Code
+          Blue Karma Dijiwa Group · Internal revenue-management tool · Built with Claude Code
         </div>
       </footer>
     </main>
