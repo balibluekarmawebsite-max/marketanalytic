@@ -219,6 +219,7 @@ model ReservationFact {
   nationality   String? // raw code as reported (e.g. AUS, FRA)
   marketSegment String? // canonical Blue Karma segment
   agent         String? // cleaned company/agent label
+  roomType      String? // property room-type name (combine rules applied)
   reservations  Int      @default(0)
   roomNights    Int      @default(0)
   revenue       Decimal  @default(0) @db.Decimal(16, 2)

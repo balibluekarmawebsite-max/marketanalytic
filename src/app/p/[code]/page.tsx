@@ -10,7 +10,6 @@ export const dynamic = "force-dynamic";
 const VALID = ["BKDS", "BKDU", "BKV"];
 const ACCENT: Record<string, string> = { BKDS: "text-bkds", BKDU: "text-bkdu", BKV: "text-bkv" };
 
-// Common nationality codes → readable names (falls back to the raw code).
 const CC: Record<string, string> = {
   AUS: "Australia", FRA: "France", GBR: "United Kingdom", NLD: "Netherlands", CHN: "China",
   DEU: "Germany", NZL: "New Zealand", USA: "United States", PRT: "Portugal", JPN: "Japan",
@@ -22,19 +21,16 @@ const CC: Record<string, string> = {
   ISR: "Israel", DZA: "Algeria", UKR: "Ukraine", CZE: "Czechia", GRC: "Greece", MEX: "Mexico",
 };
 const cname = (c: string) => CC[c] ?? c;
+const pct = (part: number, whole: number) => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "—");
 
-function pct(part: number, whole: number) {
-  return whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "—";
-}
-
-function DimTable({ title, rows, total, limit = 12, nameFn }: {
-  title: string; rows: Dim[]; total: number; limit?: number; nameFn?: (k: string) => string;
+function DimTable({ title, firstCol, rows, total, limit = 12, nameFn, hrefFn }: {
+  title: string; firstCol: string; rows: Dim[]; total: number; limit?: number;
+  nameFn?: (k: string) => string; hrefFn?: (k: string) => string;
 }) {
   const shown = rows.slice(0, limit);
   const rest = rows.slice(limit);
-  const restRes = rest.reduce((s, r) => s + r.reservations, 0);
-  const restNights = rest.reduce((s, r) => s + r.roomNights, 0);
-  const restRev = rest.reduce((s, r) => s + r.revenue, 0);
+  const r = (a: number, b: number, c: number) => ({ a, b, c });
+  const restAgg = rest.reduce((s, x) => r(s.a + x.reservations, s.b + x.roomNights, s.c + x.revenue), r(0, 0, 0));
   return (
     <Card>
       <CardHeader className="pb-2"><CardTitle className="text-base">{title}</CardTitle></CardHeader>
@@ -43,7 +39,7 @@ function DimTable({ title, rows, total, limit = 12, nameFn }: {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                <th className="py-1.5 font-medium">{title.includes("ationalit") ? "Nationality" : title.includes("egment") ? "Segment" : "Agent"}</th>
+                <th className="py-1.5 font-medium">{firstCol}</th>
                 <th className="py-1.5 text-right font-medium">Bookings</th>
                 <th className="py-1.5 text-right font-medium">Room nts</th>
                 <th className="py-1.5 text-right font-medium">Revenue</th>
@@ -51,22 +47,27 @@ function DimTable({ title, rows, total, limit = 12, nameFn }: {
               </tr>
             </thead>
             <tbody>
-              {shown.map((r) => (
-                <tr key={r.key} className="border-b border-border/50">
-                  <td className="py-1.5">{nameFn ? nameFn(r.key) : r.key}</td>
-                  <td className="py-1.5 text-right tabular-nums">{formatInt(r.reservations)}</td>
-                  <td className="py-1.5 text-right tabular-nums">{formatInt(r.roomNights)}</td>
-                  <td className="py-1.5 text-right tabular-nums">{r.revenue > 0 ? formatIDRFull(r.revenue) : "—"}</td>
-                  <td className="py-1.5 text-right tabular-nums text-muted-foreground">{pct(r.roomNights, total)}</td>
-                </tr>
-              ))}
+              {shown.map((row) => {
+                const label = nameFn ? nameFn(row.key) : row.key;
+                return (
+                  <tr key={row.key} className="border-b border-border/50">
+                    <td className="py-1.5">
+                      {hrefFn ? <Link href={hrefFn(row.key)} className="font-medium text-primary hover:underline">{label} →</Link> : label}
+                    </td>
+                    <td className="py-1.5 text-right tabular-nums">{formatInt(row.reservations)}</td>
+                    <td className="py-1.5 text-right tabular-nums">{formatInt(row.roomNights)}</td>
+                    <td className="py-1.5 text-right tabular-nums">{row.revenue > 0 ? formatIDRFull(row.revenue) : "—"}</td>
+                    <td className="py-1.5 text-right tabular-nums text-muted-foreground">{pct(row.roomNights, total)}</td>
+                  </tr>
+                );
+              })}
               {rest.length > 0 && (
                 <tr className="text-muted-foreground">
                   <td className="py-1.5">+{rest.length} others</td>
-                  <td className="py-1.5 text-right tabular-nums">{formatInt(restRes)}</td>
-                  <td className="py-1.5 text-right tabular-nums">{formatInt(restNights)}</td>
-                  <td className="py-1.5 text-right tabular-nums">{restRev > 0 ? formatIDRFull(restRev) : "—"}</td>
-                  <td className="py-1.5 text-right tabular-nums">{pct(restNights, total)}</td>
+                  <td className="py-1.5 text-right tabular-nums">{formatInt(restAgg.a)}</td>
+                  <td className="py-1.5 text-right tabular-nums">{formatInt(restAgg.b)}</td>
+                  <td className="py-1.5 text-right tabular-nums">{restAgg.c > 0 ? formatIDRFull(restAgg.c) : "—"}</td>
+                  <td className="py-1.5 text-right tabular-nums">{pct(restAgg.b, total)}</td>
                 </tr>
               )}
             </tbody>
@@ -81,21 +82,20 @@ export default async function PropertyPage({
   params, searchParams,
 }: {
   params: { code: string };
-  searchParams: { period?: string };
+  searchParams: { period?: string; seg?: string };
 }) {
   const code = params.code.toUpperCase();
   if (!VALID.includes(code)) notFound();
   const period = searchParams.period ?? "2026";
-  const a = await getPropertyAnalytics(code, period);
+  const seg = searchParams.seg;
+  const a = await getPropertyAnalytics(code, period, seg);
   if (!a) notFound();
 
   const accent = ACCENT[code] ?? "text-primary";
-  const periods = [
-    { k: "2026", label: "2026 YTD" },
-    { k: "2025", label: "2025 YTD" },
-    { k: "all", label: "All time" },
-  ];
+  const periods = [{ k: "2026", label: "2026 YTD" }, { k: "2025", label: "2025 YTD" }, { k: "all", label: "All time" }];
   const maxCell = Math.max(1, ...a.matrix.flatMap((m) => m.byMonth));
+  const segHref = (k: string) => `/p/${code}?period=${period}&seg=${encodeURIComponent(k)}`;
+  const d = a.segmentDetail;
 
   return (
     <main className="min-h-screen bg-muted/30">
@@ -108,20 +108,15 @@ export default async function PropertyPage({
             {a.city && <Badge variant="secondary">{a.city}</Badge>}
             <span className="ml-auto text-xs text-muted-foreground">Guest analytics · {a.periodLabel}</span>
           </div>
-          {/* period selector */}
           <div className="flex flex-wrap gap-1.5">
             {periods.map((p) => (
-              <Link key={p.k} href={`/p/${code}?period=${p.k}`}
-                className={`rounded-md border px-2.5 py-1 text-xs ${period === p.k ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent"}`}>
-                {p.label}
-              </Link>
+              <Link key={p.k} href={`/p/${code}?period=${p.k}${seg ? `&seg=${encodeURIComponent(seg)}` : ""}`}
+                className={`rounded-md border px-2.5 py-1 text-xs ${period === p.k ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent"}`}>{p.label}</Link>
             ))}
             <span className="mx-1 w-px bg-border" />
             {a.monthsAll.slice().reverse().map((m) => (
-              <Link key={m} href={`/p/${code}?period=${m}`}
-                className={`rounded-md border px-2 py-1 text-xs tabular-nums ${period === m ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent"}`}>
-                {monthShort(m)} {m.slice(2, 4)}
-              </Link>
+              <Link key={m} href={`/p/${code}?period=${m}${seg ? `&seg=${encodeURIComponent(seg)}` : ""}`}
+                className={`rounded-md border px-2 py-1 text-xs tabular-nums ${period === m ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent"}`}>{monthShort(m)} {m.slice(2, 4)}</Link>
             ))}
           </div>
         </div>
@@ -146,7 +141,27 @@ export default async function PropertyPage({
           ))}
         </div>
 
-        {/* Nationality × month matrix */}
+        {/* Segment drill-down */}
+        {d && (
+          <section className="space-y-3 rounded-xl border-2 border-primary/30 bg-background p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-lg font-semibold">
+                Segment: <span className={accent}>{d.segment}</span>
+              </h2>
+              <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                <span className="tabular-nums">{formatInt(d.totals.reservations)} bookings · {formatInt(d.totals.roomNights)} nts · {formatIDRFull(d.totals.revenue)} · ADR {formatIDRFull(d.totals.adr)}</span>
+                <Link href={`/p/${code}?period=${period}`} className="rounded-md border px-2 py-1 text-xs hover:bg-accent">✕ close</Link>
+              </div>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-3">
+              <DimTable title={`Agents in ${d.segment}`} firstCol="Agent" rows={d.agents} total={d.totals.roomNights} limit={12} />
+              <DimTable title={`Nationalities in ${d.segment}`} firstCol="Nationality" rows={d.nationalities} total={d.totals.roomNights} limit={12} nameFn={cname} />
+              <DimTable title={`Room types in ${d.segment}`} firstCol="Room type" rows={d.roomTypes} total={d.totals.roomNights} limit={12} />
+            </div>
+          </section>
+        )}
+
+        {/* Nationality × month */}
         {a.periodMonths.length > 1 && a.matrix.length > 0 && (
           <section className="space-y-3">
             <h2 className="text-lg font-semibold">Nationality by month <span className="text-sm font-normal text-muted-foreground">(room nights, top 8)</span></h2>
@@ -156,9 +171,7 @@ export default async function PropertyPage({
                   <thead>
                     <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
                       <th className="py-1 text-left font-medium">Nationality</th>
-                      {a.periodMonths.map((m) => (
-                        <th key={m} className="px-1 py-1 text-right font-medium tabular-nums">{monthShort(m)}</th>
-                      ))}
+                      {a.periodMonths.map((m) => <th key={m} className="px-1 py-1 text-right font-medium tabular-nums">{monthShort(m)}</th>)}
                       <th className="py-1 pl-2 text-right font-medium">Total</th>
                     </tr>
                   </thead>
@@ -167,10 +180,7 @@ export default async function PropertyPage({
                       <tr key={row.nat} className="border-t border-border/40">
                         <td className="py-1.5 pr-2 font-medium">{cname(row.nat)}</td>
                         {row.byMonth.map((v, i) => (
-                          <td key={i} className="px-1 py-1.5 text-right tabular-nums"
-                            style={{ backgroundColor: v > 0 ? `rgba(2,132,199,${(0.1 + 0.6 * (v / maxCell)).toFixed(3)})` : undefined }}>
-                            {v || ""}
-                          </td>
+                          <td key={i} className="px-1 py-1.5 text-right tabular-nums" style={{ backgroundColor: v > 0 ? `rgba(2,132,199,${(0.1 + 0.6 * (v / maxCell)).toFixed(3)})` : undefined }}>{v || ""}</td>
                         ))}
                         <td className="py-1.5 pl-2 text-right font-semibold tabular-nums">{formatInt(row.total)}</td>
                       </tr>
@@ -182,14 +192,20 @@ export default async function PropertyPage({
           </section>
         )}
 
-        {/* Nationality + Segment tables */}
+        {/* Nationality + Segment (segment rows clickable) */}
         <div className="grid gap-4 lg:grid-cols-2">
-          <DimTable title="Nationality" rows={a.nationalities} total={a.totals.roomNights} nameFn={cname} />
-          <DimTable title="Market segment" rows={a.segments} total={a.totals.roomNights} limit={14} />
+          <DimTable title="Nationality" firstCol="Nationality" rows={a.nationalities} total={a.totals.roomNights} nameFn={cname} />
+          <div className="space-y-1">
+            <DimTable title="Market segment" firstCol="Segment" rows={a.segments} total={a.totals.roomNights} limit={14} hrefFn={segHref} />
+            <p className="px-1 text-xs text-muted-foreground">Click a segment to see its agents &amp; nationalities.</p>
+          </div>
         </div>
 
-        {/* Agents */}
-        <DimTable title="Agent / channel" rows={a.agents} total={a.totals.roomNights} limit={15} />
+        {/* Room type + Agent */}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <DimTable title="Room type" firstCol="Room type" rows={a.roomTypes} total={a.totals.roomNights} limit={14} />
+          <DimTable title="Agent / channel" firstCol="Agent" rows={a.agents} total={a.totals.roomNights} limit={14} />
+        </div>
 
         {/* Nationality by segment */}
         <section className="space-y-3">
@@ -199,22 +215,15 @@ export default async function PropertyPage({
               <Card key={s.key}>
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm">{s.key}</CardTitle>
+                    <Link href={segHref(s.key)} className="text-sm font-semibold text-primary hover:underline">{s.key} →</Link>
                     <span className="text-xs text-muted-foreground tabular-nums">{formatInt(s.roomNights)} nts</span>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-1">
                   {s.tops.map((t) => (
-                    <div key={t.key} className="flex justify-between text-sm">
-                      <span>{cname(t.key)}</span>
-                      <span className="tabular-nums text-muted-foreground">{formatInt(t.reservations)}</span>
-                    </div>
+                    <div key={t.key} className="flex justify-between text-sm"><span>{cname(t.key)}</span><span className="tabular-nums text-muted-foreground">{formatInt(t.reservations)}</span></div>
                   ))}
-                  {s.revenue > 0 && (
-                    <div className="mt-1 border-t pt-1 text-xs text-muted-foreground">
-                      Revenue {formatIDRFull(s.revenue)}
-                    </div>
-                  )}
+                  {s.revenue > 0 && <div className="mt-1 border-t pt-1 text-xs text-muted-foreground">Revenue {formatIDRFull(s.revenue)}</div>}
                 </CardContent>
               </Card>
             ))}
@@ -223,9 +232,7 @@ export default async function PropertyPage({
       </div>
 
       <footer className="border-t bg-background py-6">
-        <div className="container text-xs text-muted-foreground">
-          Guest analytics derived from the arrival list · Blue Karma Dijiwa Group
-        </div>
+        <div className="container text-xs text-muted-foreground">Guest analytics derived from the arrival list · Blue Karma Dijiwa Group</div>
       </footer>
     </main>
   );
