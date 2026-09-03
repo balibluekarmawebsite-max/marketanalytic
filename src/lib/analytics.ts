@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { monthShort } from "@/lib/utils";
+import { normalizeSegment } from "@/lib/ingest/segment";
 
 export type MonthAgg = {
   month: string; // "YYYY-MM"
@@ -217,6 +218,92 @@ export async function getBudgetVsActual(code: string, period: string): Promise<B
     coverageFrom: revMonths[0] ?? null, coverageTo: revMonths[revMonths.length - 1] ?? null,
     hasPlan: segments.length > 0,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Property comparison — the "one glance, three properties" scorecard
+// ---------------------------------------------------------------------------
+
+export type CompareMetric = { code: string; value: number | null };
+export type CompareRow = {
+  code: string;
+  name: string;
+  city: string | null;
+  roomsAvailable: number | null;
+  revenue: number;
+  roomNights: number;
+  adr: number | null;
+  occupancyPct: number | null;
+  revpar: number | null;
+  paceDelta: number | null; // OTB now − STLY, percentage points, nearest upcoming month
+  paceMonth: string | null;
+  topSegment: { key: string; roomNights: number } | null;
+  topNationality: { key: string; roomNights: number } | null;
+};
+export type PropertyComparison = {
+  period: string;
+  periodLabel: string;
+  monthsAll: string[];
+  rows: CompareRow[];
+};
+
+/**
+ * Side-by-side comparison of all properties over a period: revenue, room
+ * nights, ADR, occupancy, RevPAR, booking pace vs last year, and the leading
+ * segment & nationality. Occupancy/RevPAR need the room count, so they stay
+ * null for properties whose count we don't have yet (BKDS, BKV).
+ */
+export async function getPropertyComparison(period: string): Promise<PropertyComparison> {
+  const [props, daily, facts, forward] = await Promise.all([
+    prisma.property.findMany({ orderBy: { code: "asc" } }),
+    prisma.dailyStat.findMany(),
+    prisma.reservationFact.findMany(),
+    getForwardLook(),
+  ]);
+
+  const ym = (d: Date) => new Date(d).toISOString().slice(0, 7);
+  const monthsAll = Array.from(new Set(daily.map((d) => ym(d.date)))).sort();
+
+  let inPeriod: (m: string) => boolean;
+  let periodLabel: string;
+  if (/^\d{4}-\d{2}$/.test(period)) { inPeriod = (m) => m === period; periodLabel = `${monthShort(period)} ${period.slice(0, 4)}`; }
+  else if (period === "all") { inPeriod = () => true; periodLabel = "All time"; }
+  else { inPeriod = (m) => m.startsWith(period); periodLabel = `${period} YTD`; }
+
+  const rows: CompareRow[] = props.map((p) => {
+    const dRows = daily.filter((d) => d.propertyCode === p.code && inPeriod(ym(d.date)));
+    const revenue = dRows.reduce((s, d) => s + num(d.revenue), 0);
+    const roomNights = dRows.reduce((s, d) => s + d.roomNights, 0);
+    const days = dRows.length;
+    const occDays = dRows.filter((d) => d.occupancyPct != null);
+    const occupancyPct = occDays.length ? occDays.reduce((s, d) => s + num(d.occupancyPct), 0) / occDays.length : null;
+    const revpar = p.roomsAvailable && days > 0 ? revenue / (p.roomsAvailable * days) : null;
+
+    // Pace: nearest upcoming month that has both an OTB and an STLY reading.
+    const fp = forward.find((f) => f.code === p.code);
+    const pace = fp?.months.find((m) => m.delta != null) ?? null;
+
+    // Top segment & nationality by booking volume (room nights) over the period.
+    const fRows = facts.filter((f) => f.propertyCode === p.code && inPeriod(ym(f.month)));
+    const top = (keyFn: (f: (typeof fRows)[number]) => string | null) => {
+      const m = new Map<string, number>();
+      for (const f of fRows) { const k = keyFn(f); if (k) m.set(k, (m.get(k) ?? 0) + f.roomNights); }
+      const best = Array.from(m.entries()).sort((a, b) => b[1] - a[1])[0];
+      return best ? { key: best[0], roomNights: best[1] } : null;
+    };
+
+    return {
+      code: p.code, name: p.name, city: p.city, roomsAvailable: p.roomsAvailable,
+      revenue, roomNights,
+      adr: roomNights > 0 ? revenue / roomNights : null,
+      occupancyPct, revpar,
+      paceDelta: pace?.delta ?? null, paceMonth: pace?.month ?? null,
+      topSegment: top((f) => normalizeSegment(f.agent)),
+      topNationality: top((f) => f.nationality),
+    };
+  });
+
+  return { period, periodLabel, monthsAll, rows };
 }
 
 /** Aggregate DailyStat into per-property, per-month performance. */

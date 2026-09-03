@@ -177,6 +177,7 @@ export default async function Home() {
             Revenue-management dashboard for Blue Karma Dijiwa Group — Seminyak, Ubud &amp; Village.
           </p>
           <nav className="mt-1 flex flex-wrap gap-2 text-sm">
+            <Link href="/compare" className="rounded-md border px-2.5 py-1 font-medium hover:bg-accent">Compare properties →</Link>
             <Link href="/budget" className="rounded-md border px-2.5 py-1 font-medium hover:bg-accent">Budget vs actual →</Link>
           </nav>
         </div>

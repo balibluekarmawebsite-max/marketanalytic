@@ -5,23 +5,12 @@ import { Badge } from "@/components/ui/badge";
 import { DimTable, type DimRow } from "@/components/dim-table";
 import { getPropertyAnalytics, type Dim } from "@/lib/property-analytics";
 import { formatIDRFull, formatInt, monthShort } from "@/lib/utils";
+import { countryName as cname } from "@/lib/countries";
 
 export const dynamic = "force-dynamic";
 
 const VALID = ["BKDS", "BKDU", "BKV"];
 const ACCENT: Record<string, string> = { BKDS: "text-bkds", BKDU: "text-bkdu", BKV: "text-bkv" };
-
-const CC: Record<string, string> = {
-  AUS: "Australia", FRA: "France", GBR: "United Kingdom", NLD: "Netherlands", CHN: "China",
-  DEU: "Germany", NZL: "New Zealand", USA: "United States", PRT: "Portugal", JPN: "Japan",
-  ITA: "Italy", HUN: "Hungary", PAK: "Pakistan", ARE: "UAE", SAU: "Saudi Arabia", IDN: "Indonesia",
-  SGP: "Singapore", KOR: "South Korea", IND: "India", CAN: "Canada", CHE: "Switzerland",
-  BEL: "Belgium", ESP: "Spain", SWE: "Sweden", RUS: "Russia", THA: "Thailand", MYS: "Malaysia",
-  HKG: "Hong Kong", TWN: "Taiwan", PHL: "Philippines", BRA: "Brazil", ZAF: "South Africa",
-  IRL: "Ireland", AUT: "Austria", DNK: "Denmark", NOR: "Norway", FIN: "Finland", POL: "Poland",
-  ISR: "Israel", DZA: "Algeria", UKR: "Ukraine", CZE: "Czechia", GRC: "Greece", MEX: "Mexico",
-};
-const cname = (c: string) => CC[c] ?? c;
 
 const toRows = (dims: Dim[], nameFn?: (k: string) => string, hrefFn?: (k: string) => string): DimRow[] =>
   dims.map((d) => ({
