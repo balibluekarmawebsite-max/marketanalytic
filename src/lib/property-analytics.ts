@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { normalizeSegment } from "@/lib/ingest/segment";
 
 const num = (d: unknown): number =>
   d == null ? 0 : typeof d === "number" ? d : Number((d as { toString(): string }).toString());
@@ -130,8 +131,12 @@ export async function getPropertyAnalytics(
   const periodMonths = monthsAll.filter(inPeriod);
   const reconciled = periodMonths.some((m) => daily.has(m));
 
+  // Segment is derived live from the agent, so the taxonomy can change without
+  // re-importing the reservation data.
+  const segOf = (f: Fact) => normalizeSegment(f.agent);
+
   const nationalities = aggOf(rows, (f) => f.nationality, nightsOf, revOf);
-  const segments = aggOf(rows, (f) => f.marketSegment, nightsOf, revOf);
+  const segments = aggOf(rows, segOf, nightsOf, revOf);
   const agents = aggOf(rows, (f) => f.agent, nightsOf, revOf);
   const roomTypes = aggOf(rows, (f) => f.roomType, nightsOf, revOf);
   const totals = withAdr(totalsOf(rows, nightsOf, revOf));
@@ -139,7 +144,7 @@ export async function getPropertyAnalytics(
   const segTop = segments.slice(0, 6).map((s) => {
     const natMap = new Map<string, number>();
     for (const f of rows)
-      if ((f.marketSegment || "—") === s.key) natMap.set(f.nationality || "—", (natMap.get(f.nationality || "—") || 0) + f.reservations);
+      if (segOf(f) === s.key) natMap.set(f.nationality || "—", (natMap.get(f.nationality || "—") || 0) + f.reservations);
     const tops = Array.from(natMap.entries()).map(([key, reservations]) => ({ key, reservations })).sort((a, b) => b.reservations - a.reservations).slice(0, 4);
     return { ...s, tops };
   });
@@ -152,7 +157,7 @@ export async function getPropertyAnalytics(
 
   let segmentDetail: SegmentDetail | null = null;
   if (seg) {
-    const sr = rows.filter((f) => (f.marketSegment || "—") === seg);
+    const sr = rows.filter((f) => segOf(f) === seg);
     segmentDetail = {
       segment: seg,
       totals: withAdr(totalsOf(sr, nightsOf, revOf)),
@@ -165,7 +170,7 @@ export async function getPropertyAnalytics(
   let agentDetail: AgentDetail | null = null;
   if (agent) {
     const ar = rows.filter((f) => (f.agent || "—") === agent);
-    const segsForAgent = aggOf(ar, (f) => f.marketSegment, nightsOf, revOf);
+    const segsForAgent = aggOf(ar, segOf, nightsOf, revOf);
     agentDetail = {
       agent,
       segment: segsForAgent[0]?.key ?? "—",
