@@ -1,0 +1,210 @@
+// Market Analytics Dashboard — Prisma schema
+// Blue Karma Dijiwa Group: BKDS (Seminyak), BKDU (Ubud), BKV (Village)
+//
+// Mirrors Section 13 of market-analytics-dashboard-project.md.
+// One deliberate deviation from the spec sketch: `Property.roomsAvailable`
+// is nullable here. We only know BKDU = 38 today; seeding a fake number for
+// BKDS/BKV would silently corrupt occupancy math later. Null = "unknown yet",
+// and the KPI code guards against it. Fill the real numbers in via the seed.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // directUrl is only needed for pooled providers (e.g. Supabase). Harmless to
+  // leave commented for self-hosted Postgres.
+  // directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Core reference
+// ---------------------------------------------------------------------------
+
+model Property {
+  code            String  @id // BKDS, BKDU, BKV
+  name            String
+  city            String?
+  roomsAvailable  Int? // BKDU = 38. BKDS/BKV unknown — fill before occupancy math.
+  currency        String  @default("IDR")
+
+  reservations    Reservation[]
+  dailyStats      DailyStat[]
+  segmentActuals  SegmentActual[]
+  pickupSnapshots PickupSnapshot[]
+  benchmarks      MonthlyBenchmark[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Archetype A — Reservation / arrival list (transactional, one row per booking)
+// ---------------------------------------------------------------------------
+
+model Reservation {
+  id            String @id @default(cuid())
+  propertyCode  String
+  property      Property @relation(fields: [propertyCode], references: [code])
+
+  reservationId String
+  arrivalDate   DateTime
+  departureDate DateTime
+  stayNights    Int
+  createDate    DateTime?
+  bookingWindow Int? // computed: arrivalDate - createDate (days)
+
+  roomNumber    String?
+  roomType      String?
+  roomRate      Decimal? @db.Decimal(14, 2)
+
+  guestName     String?
+  region        String?
+  nationality   String?
+  adults        Int?
+  children      Int?
+
+  marketSegment String? // canonical, after normalization
+  sourceChannel String? // canonical channel (OTA / Direct / etc.)
+  companyAgent  String? // raw source value
+
+  isRepeater    Boolean @default(false)
+  isVip         Boolean @default(false)
+  groupName     String?
+  status        String?
+  email         String?
+  phone         String?
+
+  uploadedAt    DateTime @default(now())
+  sourceFileId  String?
+
+  @@unique([propertyCode, reservationId, arrivalDate])
+  @@index([propertyCode, arrivalDate])
+  @@index([marketSegment])
+  @@index([nationality])
+}
+
+// ---------------------------------------------------------------------------
+// Archetype B — Daily aggregate report (one row per date)
+// ---------------------------------------------------------------------------
+
+model DailyStat {
+  id             String @id @default(cuid())
+  propertyCode   String
+  property       Property @relation(fields: [propertyCode], references: [code])
+
+  date           DateTime
+  roomNights     Int
+  revenue        Decimal  @db.Decimal(16, 2)
+  adr            Decimal? @db.Decimal(14, 2) // computed if missing
+  roomsAvailable Int?
+  occupancyPct   Decimal? @db.Decimal(6, 3) // computed if missing
+  revpar         Decimal? @db.Decimal(14, 2) // computed
+
+  sourceFileId   String?
+
+  @@unique([propertyCode, date])
+  @@index([propertyCode, date])
+}
+
+// ---------------------------------------------------------------------------
+// Archetype C — Market segment budget vs actual (matrix)
+// ---------------------------------------------------------------------------
+
+model SegmentActual {
+  id            String @id @default(cuid())
+  propertyCode  String
+  property      Property @relation(fields: [propertyCode], references: [code])
+
+  month         DateTime // first day of the month
+  segment       String // canonical
+  budgetRooms   Int?
+  actualRooms   Int?
+  revBudget     Decimal? @db.Decimal(16, 2)
+  actualRevenue Decimal? @db.Decimal(16, 2)
+
+  sourceFileId  String?
+
+  @@unique([propertyCode, month, segment])
+}
+
+// ---------------------------------------------------------------------------
+// Archetype D — Pickup / pace matrix (append-only snapshot history)
+// ---------------------------------------------------------------------------
+
+model PickupSnapshot {
+  id           String @id @default(cuid())
+  propertyCode String
+  property     Property @relation(fields: [propertyCode], references: [code])
+
+  snapshotDate DateTime // the day the pickup was captured
+  targetMonth  DateTime // first day of the month being forecast
+  otbOccupancy Decimal  @db.Decimal(6, 3)
+  otbRooms     Int?
+  otbRevenue   Decimal? @db.Decimal(16, 2)
+
+  sourceFileId String?
+
+  @@unique([propertyCode, snapshotDate, targetMonth])
+  @@index([propertyCode, targetMonth, snapshotDate])
+}
+
+// Normalized STLY / budget / forecast reference blocks (from Archetype D).
+model MonthlyBenchmark {
+  id           String @id @default(cuid())
+  propertyCode String
+  property     Property @relation(fields: [propertyCode], references: [code])
+
+  month        DateTime
+  kind         String // 'stly' | 'budget' | 'forecast'
+  occupancyPct Decimal? @db.Decimal(6, 3)
+  adr          Decimal? @db.Decimal(14, 2)
+  revenue      Decimal? @db.Decimal(16, 2)
+  roomsSold    Int?
+
+  @@unique([propertyCode, month, kind])
+}
+
+// ---------------------------------------------------------------------------
+// Ingestion bookkeeping + learning dictionaries
+// ---------------------------------------------------------------------------
+
+model UploadFile {
+  id              String @id @default(cuid())
+  filename        String
+  archetype       String // 'A_reservation' | 'B_daily' | 'C_segment' | 'D_pickup'
+  sheetsProcessed Int    @default(0)
+  rowsTotal       Int    @default(0)
+  rowsIngested    Int    @default(0)
+  rowsSkipped     Int    @default(0)
+  uploadedBy      String?
+  uploadedAt      DateTime @default(now())
+  mapping         Json? // column and sheet mapping used
+}
+
+// Learns column-header → canonical-field mappings (Section 4).
+model ColumnAlias {
+  id             String   @id @default(cuid())
+  archetype      String
+  sourceHeader   String
+  canonicalField String
+  confidence     Float    @default(1)
+  createdBy      String? // null = seeded, user id = learned
+  createdAt      DateTime @default(now())
+
+  @@unique([archetype, sourceHeader, canonicalField])
+}
+
+// Learns raw-segment → canonical-segment mappings (Section 5).
+model SegmentAlias {
+  id               String   @id @default(cuid())
+  sourcePattern    String // case-insensitive "contains" match, e.g. "booking.com"
+  canonicalSegment String // "OTA", "Overseas TA", etc.
+  priority         Int      @default(100) // lower = checked first; specific patterns win
+  createdBy        String?
+  createdAt        DateTime @default(now())
+
+  @@unique([sourcePattern, canonicalSegment])
+}
