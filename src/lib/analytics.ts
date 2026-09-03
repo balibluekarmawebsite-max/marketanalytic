@@ -35,6 +35,63 @@ export type Overview = {
 const num = (d: unknown): number =>
   d == null ? 0 : typeof d === "number" ? d : Number((d as { toString(): string }).toString());
 
+export type PaceMonth = { month: string; otbNow: number | null; stly: number | null; delta: number | null };
+export type PropertyPace = { code: string; name: string; asOf: string | null; stlyAsOf: string | null; months: PaceMonth[] };
+
+/**
+ * Forward-looking on-the-books & pace vs same-time-last-year, per property.
+ * Uses the latest pickup snapshot for OTB, and the closest snapshot ~1 year
+ * earlier (same month, comparable lead) as the STLY baseline.
+ */
+export async function getForwardLook(): Promise<PropertyPace[]> {
+  const [props, snaps] = await Promise.all([
+    prisma.property.findMany({ orderBy: { code: "asc" } }),
+    prisma.pickupSnapshot.findMany(),
+  ]);
+  const iso = (d: Date) => new Date(d).toISOString().slice(0, 10);
+
+  return props.map((p) => {
+    const ps = snaps.filter((s) => s.propertyCode === p.code);
+    if (ps.length === 0) return { code: p.code, name: p.name, asOf: null, stlyAsOf: null, months: [] };
+
+    const latest = ps.reduce((a, b) => (a.snapshotDate > b.snapshotDate ? a : b)).snapshotDate;
+    const ld = new Date(latest);
+    const lyYear = ld.getUTCFullYear() - 1;
+    const lMonth = ld.getUTCMonth();
+    const lDay = ld.getUTCDate();
+
+    // STLY snapshot: same month last year, latest day <= lDay (else latest in that month)
+    const lyInMonth = ps.filter((s) => { const d = new Date(s.snapshotDate); return d.getUTCFullYear() === lyYear && d.getUTCMonth() === lMonth; });
+    let stlyDate: Date | null = null;
+    if (lyInMonth.length) {
+      const le = lyInMonth.filter((s) => new Date(s.snapshotDate).getUTCDate() <= lDay);
+      const pick = (le.length ? le : lyInMonth).reduce((a, b) => (a.snapshotDate > b.snapshotDate ? a : b));
+      stlyDate = new Date(pick.snapshotDate);
+    }
+
+    const otbAt = (date: Date | null) => {
+      const m = new Map<number, number>();
+      if (!date) return m;
+      for (const s of ps) if (iso(s.snapshotDate) === iso(date)) m.set(new Date(s.targetMonth).getUTCMonth(), num(s.otbOccupancy));
+      return m;
+    };
+    const nowMap = otbAt(ld);
+    const stlyMap = otbAt(stlyDate);
+
+    const months: PaceMonth[] = [];
+    for (let mo = lMonth; mo <= 11; mo++) {
+      const otbNow = nowMap.has(mo) ? nowMap.get(mo)! : null;
+      const stly = stlyMap.has(mo) ? stlyMap.get(mo)! : null;
+      months.push({
+        month: `${ld.getUTCFullYear()}-${String(mo + 1).padStart(2, "0")}`,
+        otbNow, stly,
+        delta: otbNow != null && stly != null ? otbNow - stly : null,
+      });
+    }
+    return { code: p.code, name: p.name, asOf: iso(ld), stlyAsOf: stlyDate ? iso(stlyDate) : null, months };
+  });
+}
+
 /** Aggregate DailyStat into per-property, per-month performance. */
 export async function getOverview(): Promise<Overview> {
   const [rows, props] = await Promise.all([

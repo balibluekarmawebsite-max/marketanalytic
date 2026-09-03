@@ -14,6 +14,7 @@
     "db:studio": "prisma studio",
     "import:roomrev": "tsx scripts/import-roomrev.ts",
     "import:arrival": "tsx scripts/import-arrival.ts",
+    "import:pickup": "tsx scripts/import-pickup.ts",
     "postinstall": "prisma generate"
   },
   "prisma": {

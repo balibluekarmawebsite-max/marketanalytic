@@ -7,7 +7,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getOverview, type PropertyPerf } from "@/lib/analytics";
+import { getOverview, getForwardLook, type PropertyPerf, type PropertyPace } from "@/lib/analytics";
 import { formatIDRFull, formatInt, formatNum0, formatPct2, monthShort } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -141,6 +141,14 @@ export default async function Home() {
     dbError = e instanceof Error ? e.message : "unknown error";
   }
 
+  let forward: PropertyPace[] = [];
+  try {
+    forward = await getForwardLook();
+  } catch {
+    /* pickup data optional */
+  }
+  const hasForward = forward.some((p) => p.months.some((m) => m.otbNow != null));
+
   const hasData = overview && overview.rowCount > 0;
   const overallMonthly =
     overview?.monthLabels.map((m, i) => ({
@@ -196,6 +204,58 @@ export default async function Home() {
                 <Kpi label="Properties" value="3" sub="BKDS · BKDU · BKV" />
               </div>
             </section>
+
+            {/* Forward-looking: on the books & pace */}
+            {hasForward && (
+              <section className="space-y-3">
+                <div className="flex items-baseline justify-between">
+                  <h2 className="text-lg font-semibold">On the books &amp; pace</h2>
+                  <span className="text-xs text-muted-foreground">forward occupancy vs same time last year</span>
+                </div>
+                <div className="grid gap-4 md:grid-cols-3">
+                  {forward.map((p) => (
+                    <Card key={p.code} className="relative overflow-hidden">
+                      <div className={`absolute inset-y-0 left-0 w-1 ${ACCENT[p.code]?.bar ?? "bg-primary"}`} />
+                      <CardHeader className="pb-2">
+                        <div className="flex items-center justify-between">
+                          <CardTitle className="text-base">{p.code}</CardTitle>
+                          <span className="text-[10px] text-muted-foreground">as of {p.asOf ?? "—"}</span>
+                        </div>
+                        <CardDescription>On-the-books occupancy · pace vs last year</CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                              <th className="text-left font-medium">Month</th>
+                              <th className="text-right font-medium">OTB</th>
+                              <th className="text-right font-medium">LY</th>
+                              <th className="text-right font-medium">Pace</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {p.months.map((m) => (
+                              <tr key={m.month} className="border-t border-border/40">
+                                <td className="py-1">{monthShort(m.month)}</td>
+                                <td className="py-1 text-right font-medium tabular-nums">{m.otbNow != null ? `${m.otbNow.toFixed(1)}%` : "—"}</td>
+                                <td className="py-1 text-right tabular-nums text-muted-foreground">{m.stly != null ? `${m.stly.toFixed(1)}%` : "—"}</td>
+                                <td className={`py-1 text-right font-medium tabular-nums ${m.delta == null ? "" : m.delta >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                                  {m.delta != null ? `${m.delta >= 0 ? "+" : ""}${m.delta.toFixed(1)}` : "—"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  OTB = on-the-books occupancy for that month as of the latest snapshot; LY = same time last year; Pace = the gap in
+                  percentage points (green = ahead of last year).
+                </p>
+              </section>
+            )}
 
             <section className="space-y-3">
               <h2 className="text-lg font-semibold">Group room revenue by month</h2>
