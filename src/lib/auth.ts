@@ -55,6 +55,23 @@ export async function verifySession(token: string | undefined | null): Promise<S
 export const sessionCookieMaxAge = SESSION_TTL_DAYS * 24 * 60 * 60;
 
 /**
+ * Whether to mark the session cookie `Secure`. Behind Cloudflare "Flexible" SSL
+ * the origin is reached over plain HTTP, so keying `Secure` off NODE_ENV would
+ * set it even when the browser leg is HTTP — and the browser then drops the
+ * cookie, bouncing the user straight back to login. Instead follow the actual
+ * public protocol from X-Forwarded-Proto (the request URL as a fallback).
+ */
+export function isSecureRequest(req: Request): boolean {
+  const xf = req.headers.get("x-forwarded-proto")?.split(",")[0].trim().toLowerCase();
+  if (xf) return xf === "https";
+  try {
+    return new URL(req.url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Turn a relative path into an absolute public URL using APP_URL when set, so
  * redirects behind the reverse proxy point at the real host, not 127.0.0.1:3100.
  * Falls back to the relative path (fine for local dev / same-origin).

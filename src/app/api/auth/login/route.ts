@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyPassword } from "@/lib/password";
-import { signSession, SESSION_COOKIE, sessionCookieMaxAge } from "@/lib/auth";
+import { signSession, SESSION_COOKIE, sessionCookieMaxAge, isSecureRequest } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -39,7 +39,7 @@ export async function POST(req: Request) {
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: isSecureRequest(req),
     path: "/",
     maxAge: sessionCookieMaxAge,
   });

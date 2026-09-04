@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { SESSION_COOKIE } from "@/lib/auth";
+import { SESSION_COOKIE, isSecureRequest } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -9,7 +9,7 @@ export async function POST(req: Request) {
   res.cookies.set(SESSION_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: isSecureRequest(req),
     path: "/",
     maxAge: 0,
   });
