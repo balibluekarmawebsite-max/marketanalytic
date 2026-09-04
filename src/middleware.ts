@@ -20,16 +20,20 @@ export async function middleware(req: NextRequest) {
   const nextParam = next && next !== "/" ? `?next=${encodeURIComponent(next)}` : "";
 
   // Behind the Apache reverse proxy the app is reached on an internal address
-  // (127.0.0.1:3100). If we let the redirect resolve against that, the browser
-  // gets sent to http://localhost:3100/login and fails. So when the proxy tells
-  // us the real public host (X-Forwarded-Host), build an ABSOLUTE redirect to it.
+  // (127.0.0.1:3100). A relative redirect can get resolved against THAT address
+  // by the proxy and bounce the browser to http://localhost:3100/login, which is
+  // unreachable. So redirect to an ABSOLUTE public URL. Prefer the explicitly
+  // configured APP_URL (set it in .env — most reliable); otherwise fall back to
+  // the proxy's X-Forwarded-Host, then to a plain relative redirect for local dev.
+  const configured = process.env.APP_URL?.replace(/\/+$/, "");
   const xfHost = req.headers.get("x-forwarded-host")?.split(",")[0].trim();
-  if (xfHost) {
-    const proto = req.headers.get("x-forwarded-proto")?.split(",")[0].trim() || "https";
-    return new NextResponse(null, { status: 307, headers: { Location: `${proto}://${xfHost}/login${nextParam}` } });
+  const proto = req.headers.get("x-forwarded-proto")?.split(",")[0].trim() || "https";
+  const base = configured || (xfHost ? `${proto}://${xfHost}` : "");
+  if (base) {
+    return new NextResponse(null, { status: 307, headers: { Location: `${base}/login${nextParam}` } });
   }
 
-  // Direct hit (local dev, no proxy) → same-origin relative redirect.
+  // Direct hit (local dev, no proxy, no APP_URL) → same-origin relative redirect.
   const url = req.nextUrl.clone();
   url.pathname = "/login";
   url.search = nextParam;

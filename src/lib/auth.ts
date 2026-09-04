@@ -53,3 +53,14 @@ export async function verifySession(token: string | undefined | null): Promise<S
 }
 
 export const sessionCookieMaxAge = SESSION_TTL_DAYS * 24 * 60 * 60;
+
+/**
+ * Turn a relative path into an absolute public URL using APP_URL when set, so
+ * redirects behind the reverse proxy point at the real host, not 127.0.0.1:3100.
+ * Falls back to the relative path (fine for local dev / same-origin).
+ */
+export function publicPath(path: string): string {
+  const base = process.env.APP_URL?.replace(/\/+$/, "");
+  if (!base) return path;
+  return `${base}${path.startsWith("/") ? path : "/" + path}`;
+}

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
+import { publicPath } from "@/lib/auth";
 import { LoginForm } from "@/components/login-form";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +13,7 @@ function safeNext(next: string | undefined): string {
 export default async function LoginPage({ searchParams }: { searchParams: { next?: string } }) {
   const next = safeNext(searchParams.next);
   const user = await getSession();
-  if (user) redirect(next);
+  if (user) redirect(publicPath(next));
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted/30 p-4">
