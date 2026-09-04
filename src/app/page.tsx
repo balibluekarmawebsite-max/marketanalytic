@@ -7,7 +7,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getOverview, getForwardLook, type PropertyPerf, type PropertyPace } from "@/lib/analytics";
+import { getOverview, getForwardOtbAll, type PropertyPerf, type PropertyOtb } from "@/lib/analytics";
 import { ExportButtons } from "@/components/export-buttons";
 import { formatIDRFull, formatInt, formatNum0, formatPct2, monthShort } from "@/lib/utils";
 
@@ -110,7 +110,7 @@ function PropertyCard({ p }: { p: PropertyPerf }) {
               {lf?.occupancyPct != null ? (
                 formatPct2(lf.occupancyPct)
               ) : (
-                <span className="text-xs font-normal text-amber-600">needs room count</span>
+                <span className="text-xs font-normal text-muted-foreground">—</span>
               )}
             </div>
           </div>
@@ -150,13 +150,13 @@ export default async function Home() {
     dbError = e instanceof Error ? e.message : "unknown error";
   }
 
-  let forward: PropertyPace[] = [];
+  let forward: PropertyOtb[] = [];
   try {
-    forward = await getForwardLook();
+    forward = await getForwardOtbAll();
   } catch {
-    /* pickup data optional */
+    /* on-the-books data optional */
   }
-  const hasForward = forward.some((p) => p.months.some((m) => m.otbNow != null));
+  const hasForward = forward.some((p) => p.months.length > 0);
 
   const hasData = overview && overview.rowCount > 0;
   const overallMonthly =
@@ -222,43 +222,38 @@ export default async function Home() {
               </div>
             </section>
 
-            {/* Forward-looking: on the books & pace */}
+            {/* Forward-looking: on the books (from the latest PU sheet) */}
             {hasForward && (
               <section className="space-y-3">
                 <div className="flex items-baseline justify-between">
-                  <h2 className="text-lg font-semibold">On the books &amp; pace</h2>
-                  <span className="text-xs text-muted-foreground">forward occupancy vs same time last year</span>
+                  <h2 className="text-lg font-semibold">On the books</h2>
+                  <span className="text-xs text-muted-foreground">forward occupancy · ADR · revenue</span>
                 </div>
                 <div className="grid gap-4 md:grid-cols-3">
                   {forward.map((p) => (
                     <Card key={p.code} className="relative overflow-hidden">
                       <div className={`absolute inset-y-0 left-0 w-1 ${ACCENT[p.code]?.bar ?? "bg-primary"}`} />
                       <CardHeader className="pb-2">
-                        <div className="flex items-center justify-between">
-                          <CardTitle className="text-base">{p.code}</CardTitle>
-                          <span className="text-[10px] text-muted-foreground">as of {p.asOf ?? "—"}</span>
-                        </div>
-                        <CardDescription>On-the-books occupancy · pace vs last year</CardDescription>
+                        <CardTitle className="text-base">{p.code}</CardTitle>
+                        <CardDescription>On-the-books occupancy · ADR · revenue</CardDescription>
                       </CardHeader>
                       <CardContent>
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
                               <th className="text-left font-medium">Month</th>
-                              <th className="text-right font-medium">OTB</th>
-                              <th className="text-right font-medium">LY</th>
-                              <th className="text-right font-medium">Pace</th>
+                              <th className="text-right font-medium">Occ</th>
+                              <th className="text-right font-medium">ADR</th>
+                              <th className="text-right font-medium">Revenue</th>
                             </tr>
                           </thead>
                           <tbody>
                             {p.months.map((m) => (
                               <tr key={m.month} className="border-t border-border/40">
                                 <td className="py-1">{monthShort(m.month)}</td>
-                                <td className="py-1 text-right font-medium tabular-nums">{m.otbNow != null ? `${m.otbNow.toFixed(1)}%` : "—"}</td>
-                                <td className="py-1 text-right tabular-nums text-muted-foreground">{m.stly != null ? `${m.stly.toFixed(1)}%` : "—"}</td>
-                                <td className={`py-1 text-right font-medium tabular-nums ${m.delta == null ? "" : m.delta >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                                  {m.delta != null ? `${m.delta >= 0 ? "+" : ""}${m.delta.toFixed(1)}` : "—"}
-                                </td>
+                                <td className="py-1 text-right font-medium tabular-nums">{m.otbOcc != null ? `${m.otbOcc.toFixed(1)}%` : "—"}</td>
+                                <td className="py-1 text-right tabular-nums text-muted-foreground">{m.otbAdr != null ? formatIDRFull(m.otbAdr) : "—"}</td>
+                                <td className="py-1 text-right tabular-nums text-muted-foreground">{m.otbRevenue != null ? formatIDRFull(m.otbRevenue) : "—"}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -271,8 +266,8 @@ export default async function Home() {
                   ))}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  OTB = on-the-books occupancy for that month as of the latest snapshot; LY = same time last year; Pace = the gap in
-                  percentage points (green = ahead of last year).
+                  On-the-books = confirmed occupancy, ADR &amp; net revenue for each upcoming month, taken from the latest PU sheet&apos;s
+                  Occ on Hand line. Revenue is the plan&apos;s net figure.
                 </p>
               </section>
             )}
@@ -294,8 +289,8 @@ export default async function Home() {
                 ))}
               </div>
               <p className="text-xs text-muted-foreground">
-                Headline figures are each property&apos;s latest closed month. Occupancy needs the
-                room count per property — BKDU (38) is set; send BKDS &amp; BKV counts to unlock theirs.
+                Headline figures are each property&apos;s latest closed month. Revenue, ADR &amp; room nights are the gross daily
+                totals; occupancy is the Occ on Hand figure from that month&apos;s PU sheet.
               </p>
             </section>
           </>

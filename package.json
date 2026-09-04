@@ -16,6 +16,7 @@
     "import:arrival": "tsx scripts/import-arrival.ts",
     "import:pickup": "tsx scripts/import-pickup.ts",
     "import:segment": "tsx scripts/import-segment.ts",
+    "import:monthly": "tsx scripts/import-monthly.ts",
     "user:create": "tsx scripts/create-user.ts",
     "postinstall": "prisma generate"
   },

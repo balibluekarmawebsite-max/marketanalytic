@@ -1,4 +1,4 @@
-import { getOverview, getPropertyComparison, getBudgetVsActual, getPickupDetail } from "@/lib/analytics";
+import { getOverview, getPropertyComparison, getBudgetVsActualMonthly, getPickupDetail } from "@/lib/analytics";
 import { getPropertyAnalytics, type Dim } from "@/lib/property-analytics";
 import { countryName } from "@/lib/countries";
 
@@ -41,11 +41,18 @@ async function comparisonSheet(period: string): Promise<Sheet> {
 }
 
 async function budgetSheet(code: string, period: string): Promise<Sheet> {
-  const b = await getBudgetVsActual(code, period);
-  const aoa: Cell[][] = [["Segment", "Budget rooms", "Actual rooms", "Variance", "Achieved %", "Rev budget (IDR)"]];
+  const b = await getBudgetVsActualMonthly(code, period);
+  const aoa: Cell[][] = [["Month", "Budget occ %", "Actual occ %", "Budget rooms", "Actual rooms", "Rooms achieved %", "Budget ADR", "Actual ADR", "Budget revenue", "Actual revenue", "Revenue achieved %"]];
   if (b) {
-    for (const s of b.segments) aoa.push([s.segment, s.budgetRooms, s.actualRooms, s.varianceRooms, r2(s.achievedPct), s.revBudget == null ? null : Math.round(s.revBudget)]);
-    aoa.push(["TOTAL", b.totals.budgetRooms, b.totals.actualRooms, b.totals.varianceRooms, r2(b.totals.achievedPct), Math.round(b.totals.revBudget)]);
+    for (const r of b.months) {
+      aoa.push([
+        r.month, r2(r.budgetOcc), r2(r.actualOcc), r.budgetRooms, r.actualRooms, r2(r.roomsAchieved),
+        r.budgetAdr == null ? null : Math.round(r.budgetAdr), r.actualAdr == null ? null : Math.round(r.actualAdr),
+        r.budgetRevenue == null ? null : Math.round(r.budgetRevenue), r.actualRevenue == null ? null : Math.round(r.actualRevenue), r2(r.revAchieved),
+      ]);
+    }
+    const t = b.totals;
+    aoa.push(["TOTAL", r2(t.avgBudgetOcc), r2(t.avgActualOcc), t.budgetRooms, t.actualRooms, r2(t.roomsAchieved), null, null, Math.round(t.budgetRevenue), Math.round(t.actualRevenue), r2(t.revAchieved)]);
   }
   return { name: `Budget ${code}`, aoa };
 }

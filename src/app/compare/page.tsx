@@ -29,8 +29,8 @@ const METRICS: Row[] = [
   { label: "Room nights", get: (r) => r.roomNights, fmt: (r) => formatInt(r.roomNights), better: "high" },
   { label: "ADR", sub: "revenue ÷ room nights", get: (r) => r.adr, fmt: (r) => formatIDRFull(r.adr), better: "high" },
   {
-    label: "Occupancy", sub: "avg of daily", get: (r) => r.occupancyPct,
-    fmt: (r) => (r.occupancyPct != null ? formatPct2(r.occupancyPct) : "needs room count"), better: "high",
+    label: "Occupancy", sub: "Occ on Hand, avg", get: (r) => r.occupancyPct,
+    fmt: (r) => (r.occupancyPct != null ? formatPct2(r.occupancyPct) : "—"), better: "high",
   },
   {
     label: "RevPAR", sub: "revenue ÷ available rooms", get: (r) => r.revpar,
@@ -147,10 +147,10 @@ export default async function ComparePage({ searchParams }: { searchParams: { pe
         </Card>
 
         <p className="text-xs text-muted-foreground">
-          Revenue, room nights &amp; ADR are the authoritative daily totals for {c.periodLabel}. Occupancy and RevPAR need the
-          room count — set for BKDU (38); send BKDS &amp; BKV counts to unlock theirs. Pace is on-the-books occupancy for the
-          nearest upcoming month vs the same time last year. Top segment &amp; nationality are by room-night volume from the
-          arrival list. The leader in each ranked row is highlighted.
+          Revenue, room nights &amp; ADR are the authoritative daily totals for {c.periodLabel}. Occupancy is the Occ on Hand
+          figure from the PU sheets (averaged over the period); RevPAR still needs the room count (set for BKDU). Pace is
+          on-the-books occupancy for the nearest upcoming month vs the same time last year. Top segment &amp; nationality are by
+          room-night volume from the arrival list. The leader in each ranked row is highlighted.
         </p>
       </div>
 

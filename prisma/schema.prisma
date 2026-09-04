@@ -35,6 +35,7 @@ model Property {
   segmentActuals  SegmentActual[]
   pickupSnapshots PickupSnapshot[]
   benchmarks      MonthlyBenchmark[]
+  monthlyStats    MonthlyStat[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -128,6 +129,44 @@ model SegmentActual {
   sourceFileId  String?
 
   @@unique([propertyCode, month, segment])
+}
+
+// ---------------------------------------------------------------------------
+// Monthly actuals / budget / on-the-books — the authoritative per-month figures
+// read straight from each "<Month> PU 2026" sheet (Occ on Hand / Room Sold /
+// ADR / Revenue Nett for actuals; the Budget block for plan; the latest sheet's
+// forward columns for on-the-books). Same basis on both sides, so budget-vs-
+// actual is apples-to-apples.
+// ---------------------------------------------------------------------------
+
+model MonthlyStat {
+  id            String   @id @default(cuid())
+  propertyCode  String
+  property      Property @relation(fields: [propertyCode], references: [code])
+
+  month         DateTime // first day of the month
+
+  // Actuals — the month's own PU sheet (Occ on Hand row = final on-the-books).
+  actualOcc     Decimal? @db.Decimal(6, 3) // percent
+  actualRooms   Int?
+  actualAdr     Decimal? @db.Decimal(16, 2)
+  actualRevenue Decimal? @db.Decimal(18, 2)
+
+  // Budget — the Budget block of the PU sheet.
+  budgetOcc     Decimal? @db.Decimal(6, 3)
+  budgetRooms   Int?
+  budgetAdr     Decimal? @db.Decimal(16, 2)
+  budgetRevenue Decimal? @db.Decimal(18, 2)
+
+  // On-the-books — forward columns of the LATEST PU sheet.
+  otbOcc        Decimal? @db.Decimal(6, 3)
+  otbRooms      Int?
+  otbAdr        Decimal? @db.Decimal(16, 2)
+  otbRevenue    Decimal? @db.Decimal(18, 2)
+
+  sourceFileId  String?
+
+  @@unique([propertyCode, month])
 }
 
 // ---------------------------------------------------------------------------

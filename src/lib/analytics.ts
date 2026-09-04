@@ -254,11 +254,12 @@ export type PropertyComparison = {
  * null for properties whose count we don't have yet (BKDS, BKV).
  */
 export async function getPropertyComparison(period: string): Promise<PropertyComparison> {
-  const [props, daily, facts, forward] = await Promise.all([
+  const [props, daily, facts, forward, monthly] = await Promise.all([
     prisma.property.findMany({ orderBy: { code: "asc" } }),
     prisma.dailyStat.findMany(),
     prisma.reservationFact.findMany(),
     getForwardLook(),
+    prisma.monthlyStat.findMany(),
   ]);
 
   const ym = (d: Date) => new Date(d).toISOString().slice(0, 7);
@@ -275,8 +276,9 @@ export async function getPropertyComparison(period: string): Promise<PropertyCom
     const revenue = dRows.reduce((s, d) => s + num(d.revenue), 0);
     const roomNights = dRows.reduce((s, d) => s + d.roomNights, 0);
     const days = dRows.length;
-    const occDays = dRows.filter((d) => d.occupancyPct != null);
-    const occupancyPct = occDays.length ? occDays.reduce((s, d) => s + num(d.occupancyPct), 0) / occDays.length : null;
+    // Occupancy from the PU sheets (Occ on Hand), averaged over the period's months.
+    const occMonths = monthly.filter((r) => r.propertyCode === p.code && r.actualOcc != null && inPeriod(ym(r.month)));
+    const occupancyPct = occMonths.length ? occMonths.reduce((s, r) => s + num(r.actualOcc), 0) / occMonths.length : null;
     const revpar = p.roomsAvailable && days > 0 ? revenue / (p.roomsAvailable * days) : null;
 
     // Pace: nearest upcoming month that has both an OTB and an STLY reading.
@@ -433,12 +435,123 @@ export async function getPickupDetail(code: string, curveMonthArg?: string): Pro
   };
 }
 
+// ---------------------------------------------------------------------------
+// Monthly budget vs actual + forward on-the-books (from MonthlyStat)
+// ---------------------------------------------------------------------------
+
+export type MonthBvA = {
+  month: string;
+  budgetOcc: number | null; actualOcc: number | null;
+  budgetRooms: number | null; actualRooms: number | null;
+  budgetAdr: number | null; actualAdr: number | null;
+  budgetRevenue: number | null; actualRevenue: number | null;
+  roomsAchieved: number | null; revAchieved: number | null; occAchieved: number | null;
+};
+export type BudgetVsActualMonthly = {
+  code: string; name: string; period: string; periodLabel: string;
+  monthsAll: string[]; months: MonthBvA[];
+  totals: {
+    budgetRooms: number; actualRooms: number; roomsAchieved: number | null;
+    budgetRevenue: number; actualRevenue: number; revAchieved: number | null;
+    avgBudgetOcc: number | null; avgActualOcc: number | null;
+  };
+  hasData: boolean;
+};
+
+const pctAch = (actual: number | null, budget: number | null): number | null =>
+  actual != null && budget != null && budget !== 0 ? (actual / budget) * 100 : null;
+
+/** Per-month budget vs actual (occupancy, rooms, ADR, revenue) — all read from
+ * the PU sheets, so both sides share one basis. Replaces the segment-plan
+ * revenue comparison for the headline numbers. */
+export async function getBudgetVsActualMonthly(code: string, period: string): Promise<BudgetVsActualMonthly | null> {
+  const [prop, rows] = await Promise.all([
+    prisma.property.findUnique({ where: { code } }),
+    prisma.monthlyStat.findMany({ where: { propertyCode: code }, orderBy: { month: "asc" } }),
+  ]);
+  if (!prop) return null;
+
+  const ym = (d: Date) => new Date(d).toISOString().slice(0, 7);
+  const monthsAll = rows.map((r) => ym(r.month));
+  let inPeriod: (m: string) => boolean;
+  let periodLabel: string;
+  if (/^\d{4}-\d{2}$/.test(period)) { inPeriod = (m) => m === period; periodLabel = `${monthShort(period)} ${period.slice(0, 4)}`; }
+  else if (period === "all") { inPeriod = () => true; periodLabel = "Full year"; }
+  else { inPeriod = (m) => m.startsWith(period); periodLabel = `${period} full year`; }
+
+  const sel = rows.filter((r) => inPeriod(ym(r.month)));
+  const months: MonthBvA[] = sel.map((r) => {
+    const budgetOcc = r.budgetOcc == null ? null : num(r.budgetOcc);
+    const actualOcc = r.actualOcc == null ? null : num(r.actualOcc);
+    const budgetRooms = r.budgetRooms, actualRooms = r.actualRooms;
+    const budgetAdr = r.budgetAdr == null ? null : num(r.budgetAdr);
+    const actualAdr = r.actualAdr == null ? null : num(r.actualAdr);
+    const budgetRevenue = r.budgetRevenue == null ? null : num(r.budgetRevenue);
+    const actualRevenue = r.actualRevenue == null ? null : num(r.actualRevenue);
+    return {
+      month: ym(r.month),
+      budgetOcc, actualOcc, budgetRooms, actualRooms, budgetAdr, actualAdr, budgetRevenue, actualRevenue,
+      roomsAchieved: pctAch(actualRooms, budgetRooms),
+      revAchieved: pctAch(actualRevenue, budgetRevenue),
+      occAchieved: pctAch(actualOcc, budgetOcc),
+    };
+  });
+
+  // Totals only over months that carry an actual (closed months), so budget and
+  // actual span the same period.
+  const closed = months.filter((m) => m.actualRevenue != null || m.actualRooms != null);
+  const sum = (f: (m: MonthBvA) => number | null) => closed.reduce((s, m) => s + (f(m) ?? 0), 0);
+  const budgetRooms = sum((m) => m.budgetRooms), actualRooms = sum((m) => m.actualRooms);
+  const budgetRevenue = sum((m) => m.budgetRevenue), actualRevenue = sum((m) => m.actualRevenue);
+  const occB = closed.filter((m) => m.budgetOcc != null), occA = closed.filter((m) => m.actualOcc != null);
+
+  return {
+    code: prop.code, name: prop.name, period, periodLabel, monthsAll, months,
+    totals: {
+      budgetRooms, actualRooms, roomsAchieved: pctAch(actualRooms, budgetRooms),
+      budgetRevenue, actualRevenue, revAchieved: pctAch(actualRevenue, budgetRevenue),
+      avgBudgetOcc: occB.length ? occB.reduce((s, m) => s + (m.budgetOcc ?? 0), 0) / occB.length : null,
+      avgActualOcc: occA.length ? occA.reduce((s, m) => s + (m.actualOcc ?? 0), 0) / occA.length : null,
+    },
+    hasData: months.length > 0,
+  };
+}
+
+export type OtbMonth = { month: string; otbOcc: number | null; otbAdr: number | null; otbRevenue: number | null; otbRooms: number | null };
+export type PropertyOtb = { code: string; name: string; months: OtbMonth[] };
+
+/** Forward on-the-books (occupancy, ADR, revenue) per property, from the latest
+ * PU sheet's forward columns (stored on MonthlyStat.otb*). */
+export async function getForwardOtbAll(): Promise<PropertyOtb[]> {
+  const [props, rows] = await Promise.all([
+    prisma.property.findMany({ orderBy: { code: "asc" } }),
+    prisma.monthlyStat.findMany({ orderBy: { month: "asc" } }),
+  ]);
+  const ym = (d: Date) => new Date(d).toISOString().slice(0, 7);
+  return props.map((p) => ({
+    code: p.code, name: p.name,
+    months: rows
+      .filter((r) => r.propertyCode === p.code && r.otbOcc != null)
+      .map((r) => ({
+        month: ym(r.month),
+        otbOcc: r.otbOcc == null ? null : num(r.otbOcc),
+        otbAdr: r.otbAdr == null ? null : num(r.otbAdr),
+        otbRevenue: r.otbRevenue == null ? null : num(r.otbRevenue),
+        otbRooms: r.otbRooms,
+      })),
+  }));
+}
+
 /** Aggregate DailyStat into per-property, per-month performance. */
 export async function getOverview(): Promise<Overview> {
-  const [rows, props] = await Promise.all([
+  const [rows, props, monthly] = await Promise.all([
     prisma.dailyStat.findMany({ orderBy: [{ propertyCode: "asc" }, { date: "asc" }] }),
     prisma.property.findMany({ orderBy: { code: "asc" } }),
+    prisma.monthlyStat.findMany(),
   ]);
+  // Authoritative occupancy % from the PU sheets (Occ on Hand), keyed CODE|YYYY-MM.
+  const occByMonth = new Map<string, number>();
+  for (const r of monthly) if (r.actualOcc != null) occByMonth.set(`${r.propertyCode}|${new Date(r.month).toISOString().slice(0, 7)}`, num(r.actualOcc));
 
   const monthsSet = new Set<string>();
   // property -> month -> accumulator
@@ -464,12 +577,15 @@ export async function getOverview(): Promise<Overview> {
     const pm = acc.get(p.code) ?? new Map();
     const months: MonthAgg[] = monthLabels.map((m) => {
       const a = pm.get(m);
+      // Prefer the PU-sheet occupancy (available for every property); fall back
+      // to the daily-derived average only if a month has no monthly figure.
+      const puOcc = occByMonth.get(`${p.code}|${m}`);
       return {
         month: m,
         roomNights: a?.rn ?? 0,
         revenue: a?.rev ?? 0,
         adr: a && a.rn > 0 ? a.rev / a.rn : null,
-        occupancyPct: a && a.occDays > 0 ? a.occSum / a.occDays : null,
+        occupancyPct: puOcc != null ? puOcc : a && a.occDays > 0 ? a.occSum / a.occDays : null,
         days: a?.days ?? 0,
       };
     });

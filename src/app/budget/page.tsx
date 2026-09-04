@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { getBudgetVsActual } from "@/lib/analytics";
+import { getBudgetVsActual, getBudgetVsActualMonthly, type MonthBvA } from "@/lib/analytics";
 import { ExportButtons } from "@/components/export-buttons";
 import { formatIDRFull, formatInt, formatPct2, monthShort } from "@/lib/utils";
 
@@ -18,7 +17,7 @@ const ACCENT: Record<string, { text: string; bar: string }> = {
 function pctTone(pct: number | null): string {
   if (pct == null) return "text-muted-foreground";
   if (pct >= 100) return "text-emerald-600";
-  if (pct >= 85) return "text-amber-600";
+  if (pct >= 90) return "text-amber-600";
   return "text-red-600";
 }
 
@@ -27,33 +26,28 @@ function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: 
     <Card className="shadow-none">
       <CardContent className="p-4">
         <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
-        <div className={`mt-1 text-xl font-semibold tabular-nums ${tone ?? ""}`}>{value}</div>
+        <div className={`mt-1 text-lg font-semibold tabular-nums ${tone ?? ""}`}>{value}</div>
         {sub && <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
   );
 }
 
-export default async function BudgetPage({
-  searchParams,
-}: {
-  searchParams: { p?: string; period?: string };
-}) {
+const occ = (v: number | null) => (v == null ? "—" : formatPct2(v));
+const idr = (v: number | null) => (v == null ? "—" : formatIDRFull(v));
+const int = (v: number | null) => (v == null ? "—" : formatInt(v));
+
+export default async function BudgetPage({ searchParams }: { searchParams: { p?: string; period?: string } }) {
   const code = (searchParams.p ?? "BKDS").toUpperCase();
   if (!VALID.includes(code)) notFound();
   const period = searchParams.period ?? "2026";
-  const b = await getBudgetVsActual(code, period);
-  if (!b) notFound();
+  const [m, seg] = await Promise.all([getBudgetVsActualMonthly(code, period), getBudgetVsActual(code, period)]);
+  if (!m) notFound();
 
   const accent = ACCENT[code] ?? { text: "text-primary", bar: "bg-primary" };
   const periods = [{ k: "2026", label: "2026 full year" }, { k: "all", label: "All" }];
-  const maxRooms = Math.max(1, ...b.segments.map((s) => Math.max(s.budgetRooms ?? 0, s.actualRooms ?? 0)));
-  const covLabel =
-    b.coverageFrom && b.coverageTo
-      ? b.coverageFrom === b.coverageTo
-        ? `${monthShort(b.coverageFrom)} ${b.coverageFrom.slice(0, 4)}`
-        : `${monthShort(b.coverageFrom)}–${monthShort(b.coverageTo)} ${b.coverageTo.slice(0, 4)}`
-      : null;
+  const t = m.totals;
+  const maxRooms = seg ? Math.max(1, ...seg.segments.map((s) => Math.max(s.budgetRooms ?? 0, s.actualRooms ?? 0))) : 1;
 
   return (
     <main className="min-h-screen bg-muted/30">
@@ -62,135 +56,162 @@ export default async function BudgetPage({
           <Link href="/" className="text-xs text-muted-foreground hover:underline">← Group dashboard</Link>
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-xl font-semibold tracking-tight">Budget vs actual</h1>
-            <span className="text-sm text-muted-foreground">{b.name}</span>
-            <span className="ml-auto text-xs text-muted-foreground">Market-segment plan · {b.periodLabel}</span>
+            <span className="text-sm text-muted-foreground">{m.name}</span>
+            <span className="ml-auto text-xs text-muted-foreground">Revenue plan · {m.periodLabel}</span>
           </div>
-          {/* Property selector */}
           <div className="flex flex-wrap gap-1.5">
             {VALID.map((c) => (
               <Link key={c} href={`/budget?p=${c}&period=${period}`}
                 className={`rounded-md border px-2.5 py-1 text-xs font-medium ${code === c ? `${ACCENT[c].bar} text-white` : "bg-background hover:bg-accent"}`}>{c}</Link>
             ))}
             <span className="mx-1 w-px bg-border" />
-            {/* Period selector */}
             {periods.map((p) => (
               <Link key={p.k} href={`/budget?p=${code}&period=${p.k}`}
                 className={`rounded-md border px-2.5 py-1 text-xs ${period === p.k ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent"}`}>{p.label}</Link>
             ))}
             <span className="mx-1 w-px bg-border" />
-            {b.monthsAll.map((m) => (
-              <Link key={m} href={`/budget?p=${code}&period=${m}`}
-                className={`rounded-md border px-2 py-1 text-xs tabular-nums ${period === m ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent"}`}>{monthShort(m)} {m.slice(2, 4)}</Link>
+            {m.monthsAll.map((mm) => (
+              <Link key={mm} href={`/budget?p=${code}&period=${mm}`}
+                className={`rounded-md border px-2 py-1 text-xs tabular-nums ${period === mm ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent"}`}>{monthShort(mm)} {mm.slice(2, 4)}</Link>
             ))}
           </div>
         </div>
       </header>
 
       <div className="container space-y-8 py-8">
-        {!b.hasPlan ? (
-          <Card>
-            <CardContent className="p-6 text-sm text-muted-foreground">No plan data for this period.</CardContent>
-          </Card>
+        {!m.hasData ? (
+          <Card><CardContent className="p-6 text-sm text-muted-foreground">No budget data for this period.</CardContent></Card>
         ) : (
           <>
             <div className="flex justify-end">
               <ExportButtons dataset="budget" p={code} period={period} />
             </div>
-            {/* KPI strip */}
+
+            {/* KPI strip — occupancy, rooms, revenue (all from the PU-sheet plan) */}
             <div className="space-y-2">
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                <Kpi label="Budget rooms" value={formatInt(b.totals.budgetRooms)} sub="planned rooms sold" />
-                <Kpi label="Actual rooms" value={formatInt(b.totals.actualRooms)}
-                  sub={`${b.totals.varianceRooms >= 0 ? "+" : ""}${formatInt(b.totals.varianceRooms)} vs budget`} />
-                <Kpi label="Rooms achieved" value={formatPct2(b.totals.achievedPct)} tone={pctTone(b.totals.achievedPct)} sub="actual ÷ budget" />
-                <Kpi label="Revenue budget" value={formatIDRFull(b.totals.revBudget)} sub="planned room revenue" />
+                <Kpi label="Occupancy — budget" value={occ(t.avgBudgetOcc)} sub="avg over closed months" />
+                <Kpi label="Occupancy — actual" value={occ(t.avgActualOcc)} tone={pctTone(t.avgActualOcc != null && t.avgBudgetOcc != null ? (t.avgActualOcc / t.avgBudgetOcc) * 100 : null)} sub="Occ on Hand" />
+                <Kpi label="Rooms — budget" value={int(t.budgetRooms)} sub="planned rooms sold" />
+                <Kpi label="Rooms — actual" value={int(t.actualRooms)} tone={pctTone(t.roomsAchieved)} sub={t.roomsAchieved != null ? `${formatPct2(t.roomsAchieved)} of budget` : undefined} />
               </div>
-              {/* Revenue: plan vs authoritative daily actuals (neutral — see note) */}
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                <Kpi label="Actual revenue" value={formatIDRFull(b.actualRevenue)}
-                  sub={covLabel ? `daily totals · ${covLabel}` : "no closed months yet"} />
-                <Kpi label="Rev. budget (same months)" value={formatIDRFull(b.revBudgetCovered)}
-                  sub={covLabel ? `plan · ${covLabel}` : "—"} />
-                <Kpi label="Actual vs plan revenue"
-                  value={b.revAchievedPct != null ? `${(b.revAchievedPct / 100).toFixed(2)}×` : "—"}
-                  sub={covLabel ? `actual ÷ plan · ${covLabel}` : "—"} />
+                <Kpi label="Revenue — budget" value={idr(t.budgetRevenue)} sub="planned (net)" />
+                <Kpi label="Revenue — actual" value={idr(t.actualRevenue)} tone={pctTone(t.revAchieved)} sub="from the PU sheet" />
+                <Kpi label="Revenue achieved" value={t.revAchieved != null ? formatPct2(t.revAchieved) : "—"} tone={pctTone(t.revAchieved)} sub="actual ÷ budget" />
+                <Kpi label="Rooms achieved" value={t.roomsAchieved != null ? formatPct2(t.roomsAchieved) : "—"} tone={pctTone(t.roomsAchieved)} sub="actual ÷ budget" />
               </div>
               <p className="text-xs text-muted-foreground">
-                Rooms (budget &amp; actual) and the revenue budget come from the market-segment plan; the room volumes
-                reconcile closely with the daily data. Actual revenue is the authoritative daily room-revenue total over the
-                same closed months{covLabel ? ` (${covLabel})` : ""}. Note: the plan&apos;s revenue line runs well below actual
-                for the same room volume, so it appears to be recorded on a different basis — treat the actual-vs-plan revenue
-                figure as indicative and reconcile the plan with Finance.
+                Budget and actual are read from the same PU sheet — budget from the plan block, actual from Occ on Hand / Room
+                Sold / ADR / Revenue Nett — so they compare like-for-like. Revenue here is the plan&apos;s net figure (distinct from
+                the gross daily room revenue on the dashboard). Green ≥ 100% of budget, amber ≥ 90%, red below.
               </p>
             </div>
 
-            {/* Segment table */}
+            {/* Monthly budget vs actual */}
             <section className="space-y-3">
-              <h2 className="text-lg font-semibold">By market segment</h2>
+              <h2 className="text-lg font-semibold">By month</h2>
               <Card>
                 <CardContent className="overflow-x-auto pt-6">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                        <th className="py-1 pr-2 text-left font-medium">Segment</th>
-                        <th className="px-2 py-1 text-right font-medium">Budget rms</th>
-                        <th className="px-2 py-1 text-right font-medium">Actual rms</th>
-                        <th className="px-2 py-1 text-right font-medium">Variance</th>
-                        <th className="px-2 py-1 text-right font-medium">Achieved</th>
-                        <th className="px-2 py-1 text-left font-medium" style={{ width: 160 }}>Budget vs actual</th>
-                        <th className="px-2 py-1 text-right font-medium">Rev budget</th>
-                        <th className="py-1 pl-2 text-right font-medium">Mix</th>
+                        <th rowSpan={2} className="py-1 pr-3 text-left align-bottom font-medium">Month</th>
+                        <th colSpan={2} className="px-2 py-1 text-center font-medium">Occupancy</th>
+                        <th colSpan={3} className="px-2 py-1 text-center font-medium">Rooms sold</th>
+                        <th colSpan={2} className="px-2 py-1 text-center font-medium">ADR</th>
+                        <th colSpan={3} className="px-2 py-1 text-center font-medium">Revenue (net)</th>
+                      </tr>
+                      <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        {["Bud", "Act", "Bud", "Act", "Ach", "Bud", "Act", "Bud", "Act", "Ach"].map((h, i) => (
+                          <th key={i} className={`px-2 py-1 font-medium ${i === 0 ? "" : "text-right"} ${[1, 4, 9].includes(i) ? "pr-3" : ""}`}>{h}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {b.segments.map((s) => (
-                        <tr key={s.segment} className="border-t border-border/40">
-                          <td className="py-1.5 pr-2 font-medium">{s.segment}</td>
-                          <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums">{s.budgetRooms != null ? formatInt(s.budgetRooms) : "—"}</td>
-                          <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums font-medium">{s.actualRooms != null ? formatInt(s.actualRooms) : "—"}</td>
-                          <td className={`whitespace-nowrap px-2 py-1.5 text-right tabular-nums ${s.varianceRooms == null ? "text-muted-foreground" : s.varianceRooms >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                            {s.varianceRooms != null ? `${s.varianceRooms >= 0 ? "+" : ""}${formatInt(s.varianceRooms)}` : "—"}
+                      {m.months.map((r: MonthBvA) => (
+                        <tr key={r.month} className="border-t border-border/40">
+                          <td className="py-1.5 pr-3 font-medium">
+                            <Link href={`/budget?p=${code}&period=${r.month}`} className="hover:underline">{monthShort(r.month)} {r.month.slice(2, 4)}</Link>
                           </td>
-                          <td className={`whitespace-nowrap px-2 py-1.5 text-right tabular-nums font-medium ${pctTone(s.achievedPct)}`}>{s.achievedPct != null ? formatPct2(s.achievedPct) : "—"}</td>
-                          <td className="px-2 py-1.5">
-                            <div className="relative h-3 w-full rounded bg-muted">
-                              {/* budget = outline width, actual = filled */}
-                              <div className="absolute inset-y-0 left-0 rounded border border-muted-foreground/40" style={{ width: `${((s.budgetRooms ?? 0) / maxRooms) * 100}%` }} />
-                              <div className={`absolute inset-y-0 left-0 rounded ${accent.bar} opacity-80`} style={{ width: `${((s.actualRooms ?? 0) / maxRooms) * 100}%` }} />
-                            </div>
-                          </td>
-                          <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums">{s.revBudget != null ? formatIDRFull(s.revBudget) : "—"}</td>
-                          <td className="whitespace-nowrap py-1.5 pl-2 text-right tabular-nums text-muted-foreground">{s.revSharePct != null ? `${s.revSharePct.toFixed(1)}%` : "—"}</td>
+                          <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-muted-foreground">{occ(r.budgetOcc)}</td>
+                          <td className={`whitespace-nowrap px-2 py-1.5 pr-3 text-right tabular-nums font-medium ${pctTone(r.occAchieved)}`}>{occ(r.actualOcc)}</td>
+                          <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-muted-foreground">{int(r.budgetRooms)}</td>
+                          <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums font-medium">{int(r.actualRooms)}</td>
+                          <td className={`whitespace-nowrap px-2 py-1.5 pr-3 text-right tabular-nums ${pctTone(r.roomsAchieved)}`}>{r.roomsAchieved != null ? `${r.roomsAchieved.toFixed(0)}%` : "—"}</td>
+                          <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-muted-foreground">{idr(r.budgetAdr)}</td>
+                          <td className="whitespace-nowrap px-2 py-1.5 pr-3 text-right tabular-nums">{idr(r.actualAdr)}</td>
+                          <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-muted-foreground">{idr(r.budgetRevenue)}</td>
+                          <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums font-medium">{idr(r.actualRevenue)}</td>
+                          <td className={`whitespace-nowrap px-2 py-1.5 text-right tabular-nums font-medium ${pctTone(r.revAchieved)}`}>{r.revAchieved != null ? `${r.revAchieved.toFixed(0)}%` : "—"}</td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 border-border font-semibold">
-                        <td className="py-2 pr-2">Total</td>
-                        <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{formatInt(b.totals.budgetRooms)}</td>
-                        <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{formatInt(b.totals.actualRooms)}</td>
-                        <td className={`whitespace-nowrap px-2 py-2 text-right tabular-nums ${b.totals.varianceRooms >= 0 ? "text-emerald-600" : "text-red-600"}`}>{b.totals.varianceRooms >= 0 ? "+" : ""}{formatInt(b.totals.varianceRooms)}</td>
-                        <td className={`whitespace-nowrap px-2 py-2 text-right tabular-nums ${pctTone(b.totals.achievedPct)}`}>{formatPct2(b.totals.achievedPct)}</td>
-                        <td />
-                        <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{formatIDRFull(b.totals.revBudget)}</td>
-                        <td className="py-2 pl-2 text-right tabular-nums text-muted-foreground">100%</td>
+                        <td className="py-2 pr-3">Total</td>
+                        <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">{occ(t.avgBudgetOcc)}</td>
+                        <td className="px-2 py-2 pr-3 text-right tabular-nums">{occ(t.avgActualOcc)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">{int(t.budgetRooms)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{int(t.actualRooms)}</td>
+                        <td className={`px-2 py-2 pr-3 text-right tabular-nums ${pctTone(t.roomsAchieved)}`}>{t.roomsAchieved != null ? `${t.roomsAchieved.toFixed(0)}%` : "—"}</td>
+                        <td className="px-2 py-2" colSpan={2} />
+                        <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">{idr(t.budgetRevenue)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{idr(t.actualRevenue)}</td>
+                        <td className={`px-2 py-2 text-right tabular-nums ${pctTone(t.revAchieved)}`}>{t.revAchieved != null ? `${t.revAchieved.toFixed(0)}%` : "—"}</td>
                       </tr>
                     </tfoot>
                   </table>
                 </CardContent>
               </Card>
-              <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5"><span className={`inline-block h-2.5 w-4 rounded ${accent.bar} opacity-80`} /> actual rooms</span>
-                <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-4 rounded border border-muted-foreground/40" /> budget rooms</span>
-                <span>Segments are the property&apos;s own budget plan lines. Green achievement ≥ 100%, amber ≥ 85%, red below.</span>
-              </div>
             </section>
+
+            {/* Secondary: channel / segment mix (rooms) from the market-segment plan */}
+            {seg && seg.segments.length > 0 && (
+              <section className="space-y-3">
+                <h2 className="text-lg font-semibold">Planned channel mix <span className="text-sm font-normal text-muted-foreground">· rooms by market segment</span></h2>
+                <Card>
+                  <CardContent className="overflow-x-auto pt-6">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                          <th className="py-1 pr-2 text-left font-medium">Segment</th>
+                          <th className="px-2 py-1 text-right font-medium">Budget rms</th>
+                          <th className="px-2 py-1 text-right font-medium">Actual rms</th>
+                          <th className="px-2 py-1 text-right font-medium">Achieved</th>
+                          <th className="px-2 py-1 text-left font-medium" style={{ width: 150 }}>Budget vs actual</th>
+                          <th className="py-1 pl-2 text-right font-medium">Mix</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {seg.segments.map((s) => (
+                          <tr key={s.segment} className="border-t border-border/40">
+                            <td className="py-1.5 pr-2 font-medium">{s.segment}</td>
+                            <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-muted-foreground">{int(s.budgetRooms)}</td>
+                            <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums font-medium">{int(s.actualRooms)}</td>
+                            <td className={`whitespace-nowrap px-2 py-1.5 text-right tabular-nums ${pctTone(s.achievedPct)}`}>{s.achievedPct != null ? `${s.achievedPct.toFixed(0)}%` : "—"}</td>
+                            <td className="px-2 py-1.5">
+                              <div className="relative h-3 w-full rounded bg-muted">
+                                <div className="absolute inset-y-0 left-0 rounded border border-muted-foreground/40" style={{ width: `${((s.budgetRooms ?? 0) / maxRooms) * 100}%` }} />
+                                <div className={`absolute inset-y-0 left-0 rounded ${accent.bar} opacity-80`} style={{ width: `${((s.actualRooms ?? 0) / maxRooms) * 100}%` }} />
+                              </div>
+                            </td>
+                            <td className="whitespace-nowrap py-1.5 pl-2 text-right tabular-nums text-muted-foreground">{s.revSharePct != null ? `${s.revSharePct.toFixed(1)}%` : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </CardContent>
+                </Card>
+                <p className="text-xs text-muted-foreground">Channel mix is the market-segment plan (rooms). The headline budget-vs-actual above is the authoritative monthly plan from the PU sheets.</p>
+              </section>
+            )}
           </>
         )}
       </div>
 
       <footer className="border-t bg-background py-6">
-        <div className="container text-xs text-muted-foreground">Budget vs actual from the market-segment plan · Blue Karma Dijiwa Group</div>
+        <div className="container text-xs text-muted-foreground">Budget vs actual from the monthly revenue plan · Blue Karma Dijiwa Group</div>
       </footer>
     </main>
   );
