@@ -100,14 +100,14 @@ function main() {
       }
       return null;
     };
-    return { rows, cols, bcols, bi, pick };
+    return { rows, cols, bcols, bi, pick, hdr: hi >= 0 ? (rows[hi] as unknown[]) : [] };
   };
 
-  const actualFor = (s: ReturnType<typeof parseSheet>, mo: number): Fig => ({
-    occ: asPct(s.pick((l) => l === "occ on hand", s.cols, mo)),
-    rooms: (() => { const r = s.pick((l) => l.startsWith("room sold"), s.cols, mo); return r == null ? null : Math.round(r); })(),
-    adr: s.pick((l) => l === "adr", s.cols, mo),
-    rev: s.pick((l) => l.includes("revenue nett") || l === "revenue net", s.cols, mo),
+  const actualFor = (s: ReturnType<typeof parseSheet>, mo: number, colMap: Map<number, number> = s.cols): Fig => ({
+    occ: asPct(s.pick((l) => l === "occ on hand", colMap, mo)),
+    rooms: (() => { const r = s.pick((l) => l.startsWith("room sold"), colMap, mo); return r == null ? null : Math.round(r); })(),
+    adr: s.pick((l) => l === "adr", colMap, mo),
+    rev: s.pick((l) => l.includes("revenue nett") || l === "revenue net", colMap, mo),
   });
   const budgetFor = (s: ReturnType<typeof parseSheet>, mo: number): Fig => ({
     occ: asPct(s.pick((l) => l.startsWith("occ"), s.bcols, mo, s.bi + 1, s.bi + 6)),
@@ -129,8 +129,19 @@ function main() {
     get(month).budget = budgetFor(s, month);
   }
   // The latest sheet contributes on-the-books for every month from itself onward.
+  // Build a FORWARD column map (columns at or after the sheet's own month) so a
+  // header that repeats the prior month at the far end — e.g. a January sheet
+  // whose last column is next-year December — doesn't make a forward month read
+  // the prior-year column.
   const ls = parseSheet(latest.name);
-  for (let mo = latest.month; mo <= 12; mo++) get(mo).otb = actualFor(ls, mo);
+  const ownCol = ls.cols.get(latest.month) ?? 1;
+  const fwdCols = new Map<number, number>();
+  ls.hdr.forEach((v, j) => {
+    if (j === 0 || v == null || j < ownCol) return;
+    const mo = monthOf(v);
+    if (mo && !fwdCols.has(mo)) fwdCols.set(mo, j);
+  });
+  for (let mo = latest.month; mo <= 12; mo++) get(mo).otb = actualFor(ls, mo, fwdCols);
 
   const src = `monthly:${file.split("/").pop()}`;
   const rows = Array.from(data.entries()).map(([mo, d]) => ({

@@ -465,13 +465,17 @@ const pctAch = (actual: number | null, budget: number | null): number | null =>
  * the PU sheets, so both sides share one basis. Replaces the segment-plan
  * revenue comparison for the headline numbers. */
 export async function getBudgetVsActualMonthly(code: string, period: string): Promise<BudgetVsActualMonthly | null> {
-  const [prop, rows] = await Promise.all([
+  const [prop, allRows] = await Promise.all([
     prisma.property.findUnique({ where: { code } }),
     prisma.monthlyStat.findMany({ where: { propertyCode: code }, orderBy: { month: "asc" } }),
   ]);
   if (!prop) return null;
 
   const ym = (d: Date) => new Date(d).toISOString().slice(0, 7);
+  // Budget-vs-actual is only about months that HAVE a budget (the 2026 plan) —
+  // exclude the prior-year (2025) actual-only rows so they can't clutter the
+  // month selector or inflate the achievement totals.
+  const rows = allRows.filter((r) => r.budgetOcc != null || r.budgetRooms != null || r.budgetRevenue != null);
   const monthsAll = rows.map((r) => ym(r.month));
   let inPeriod: (m: string) => boolean;
   let periodLabel: string;
@@ -497,21 +501,23 @@ export async function getBudgetVsActualMonthly(code: string, period: string): Pr
     };
   });
 
-  // Totals only over months that carry an actual (closed months), so budget and
-  // actual span the same period.
-  const closed = months.filter((m) => m.actualRevenue != null || m.actualRooms != null);
-  const sum = (f: (m: MonthBvA) => number | null) => closed.reduce((s, m) => s + (f(m) ?? 0), 0);
-  const budgetRooms = sum((m) => m.budgetRooms), actualRooms = sum((m) => m.actualRooms);
-  const budgetRevenue = sum((m) => m.budgetRevenue), actualRevenue = sum((m) => m.actualRevenue);
-  const occB = closed.filter((m) => m.budgetOcc != null), occA = closed.filter((m) => m.actualOcc != null);
+  // Each total is summed/averaged only over months that carry BOTH sides, so
+  // budget and actual always span the same set (no inflated achievement, and the
+  // two occupancy averages cover identical months).
+  const sumOf = (arr: MonthBvA[], f: (m: MonthBvA) => number | null) => arr.reduce((s, m) => s + (f(m) ?? 0), 0);
+  const roomsBoth = months.filter((m) => m.actualRooms != null && m.budgetRooms != null);
+  const revBoth = months.filter((m) => m.actualRevenue != null && m.budgetRevenue != null);
+  const occBoth = months.filter((m) => m.actualOcc != null && m.budgetOcc != null);
+  const budgetRooms = sumOf(roomsBoth, (m) => m.budgetRooms), actualRooms = sumOf(roomsBoth, (m) => m.actualRooms);
+  const budgetRevenue = sumOf(revBoth, (m) => m.budgetRevenue), actualRevenue = sumOf(revBoth, (m) => m.actualRevenue);
 
   return {
     code: prop.code, name: prop.name, period, periodLabel, monthsAll, months,
     totals: {
       budgetRooms, actualRooms, roomsAchieved: pctAch(actualRooms, budgetRooms),
       budgetRevenue, actualRevenue, revAchieved: pctAch(actualRevenue, budgetRevenue),
-      avgBudgetOcc: occB.length ? occB.reduce((s, m) => s + (m.budgetOcc ?? 0), 0) / occB.length : null,
-      avgActualOcc: occA.length ? occA.reduce((s, m) => s + (m.actualOcc ?? 0), 0) / occA.length : null,
+      avgBudgetOcc: occBoth.length ? sumOf(occBoth, (m) => m.budgetOcc) / occBoth.length : null,
+      avgActualOcc: occBoth.length ? sumOf(occBoth, (m) => m.actualOcc) / occBoth.length : null,
     },
     hasData: months.length > 0,
   };
