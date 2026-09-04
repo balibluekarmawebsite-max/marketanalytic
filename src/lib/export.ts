@@ -59,13 +59,16 @@ async function budgetSheet(code: string, period: string): Promise<Sheet> {
 
 async function businessOverviewSheet(code: string): Promise<Sheet> {
   const bo = await getBusinessOverview(code);
-  const aoa: Cell[][] = [["Month", "Occ 2026 %", "Occ 2025 %", "ADR 2026", "ADR 2025", "Revenue 2026", "Revenue 2025"]];
+  const years = bo?.years ?? [];
+  const header: Cell[] = ["Month", ...years.map((y) => `Occ ${y} %`), ...years.map((y) => `ADR ${y}`), ...years.map((y) => `Revenue ${y}`)];
+  const aoa: Cell[][] = [header];
   if (bo) {
     for (const r of bo.months) {
       aoa.push([
-        `2026-${String(r.month).padStart(2, "0")}`, r2(r.occ2026), r2(r.occ2025),
-        r.adr2026 == null ? null : Math.round(r.adr2026), r.adr2025 == null ? null : Math.round(r.adr2025),
-        r.rev2026 == null ? null : Math.round(r.rev2026), r.rev2025 == null ? null : Math.round(r.rev2025),
+        `${String(r.month).padStart(2, "0")}`,
+        ...years.map((y) => r2(r.byYear[y]?.occ ?? null)),
+        ...years.map((y) => { const v = r.byYear[y]?.adr; return v == null ? null : Math.round(v); }),
+        ...years.map((y) => { const v = r.byYear[y]?.rev; return v == null ? null : Math.round(v); }),
       ]);
     }
   }

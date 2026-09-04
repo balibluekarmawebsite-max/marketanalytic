@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
-import { getBudgetVsActual, getBudgetVsActualMonthly, getBusinessOverview, type MonthBvA, type YoyMonth } from "@/lib/analytics";
+import { getBudgetVsActual, getBudgetVsActualMonthly, getBusinessOverview, type MonthBvA, type YoyMonth, type YoyMetric } from "@/lib/analytics";
 import { ExportButtons } from "@/components/export-buttons";
 import { formatIDRFull, formatInt, formatPct2, monthShort } from "@/lib/utils";
 
@@ -172,13 +172,21 @@ export default async function BudgetPage({ searchParams }: { searchParams: { p?:
               </Card>
             </section>
 
-            {/* Business overview — pure actuals, 2026 vs 2025 */}
-            {bo && bo.months.length > 0 && (() => {
-              const bt = bo.totals;
+            {/* Business overview — pure actuals, all years we hold */}
+            {bo && bo.months.length > 0 && bo.years.length > 0 && (() => {
+              const years = bo.years;
+              const latest = years[years.length - 1];
+              const prior = years.length >= 2 ? years[years.length - 2] : null;
+              type Metric = { key: string; label: string; fmt: (v: number | null) => string; get: (mm: YoyMetric | undefined) => number | null; tot: (y: number) => number | null; delta: (a: number | null, b: number | null) => number | null; suf: string };
+              const metrics: Metric[] = [
+                { key: "occ", label: "Occupancy", fmt: occ, get: (mm) => mm?.occ ?? null, tot: (y) => bo.totals[y]?.occ ?? null, delta: deltaPts, suf: " pt" },
+                { key: "adr", label: "ADR", fmt: idr, get: (mm) => mm?.adr ?? null, tot: (y) => { const tt = bo.totals[y]; return tt && tt.rooms > 0 ? tt.rev / tt.rooms : null; }, delta: growthPct, suf: "%" },
+                { key: "rev", label: "Revenue (net)", fmt: idr, get: (mm) => mm?.rev ?? null, tot: (y) => bo.totals[y]?.rev ?? null, delta: growthPct, suf: "%" },
+              ];
               return (
                 <section className="space-y-3">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <h2 className="text-lg font-semibold">Business overview <span className="text-sm font-normal text-muted-foreground">· actual 2026 vs 2025</span></h2>
+                    <h2 className="text-lg font-semibold">Business overview <span className="text-sm font-normal text-muted-foreground">· actual {years[0]}–{latest}</span></h2>
                     <span className="text-xs text-muted-foreground">occupancy · ADR · revenue, actuals only</span>
                   </div>
                   <Card>
@@ -187,56 +195,55 @@ export default async function BudgetPage({ searchParams }: { searchParams: { p?:
                         <thead>
                           <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
                             <th rowSpan={2} className="py-1 pr-3 text-left align-bottom font-medium">Month</th>
-                            <th colSpan={3} className="px-2 py-1 text-center font-medium">Occupancy</th>
-                            <th colSpan={3} className="px-2 py-1 text-center font-medium">ADR</th>
-                            <th colSpan={3} className="px-2 py-1 text-center font-medium">Revenue (net)</th>
+                            {metrics.map((mm) => <th key={mm.key} colSpan={years.length + (prior ? 1 : 0)} className="px-2 py-1 text-center font-medium">{mm.label}</th>)}
                           </tr>
                           <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                            {["2026", "2025", "Δ", "2026", "2025", "Δ", "2026", "2025", "Δ"].map((h, i) => (
-                              <th key={i} className={`px-2 py-1 text-right font-medium ${[2, 5, 8].includes(i) ? "pr-3" : ""}`}>{h}</th>
-                            ))}
+                            {metrics.flatMap((mm) => [
+                              ...years.map((y) => <th key={`${mm.key}-${y}`} className="px-2 py-1 text-right font-medium">{y}</th>),
+                              ...(prior ? [<th key={`${mm.key}-d`} className="px-2 py-1 pr-3 text-right font-medium">Δ</th>] : []),
+                            ])}
                           </tr>
                         </thead>
                         <tbody>
-                          {bo.months.map((r: YoyMonth) => {
-                            const oD = deltaPts(r.occ2026, r.occ2025), aD = growthPct(r.adr2026, r.adr2025), rD = growthPct(r.rev2026, r.rev2025);
-                            const mkey = `2026-${String(r.month).padStart(2, "0")}`;
-                            return (
-                              <tr key={r.month} className="border-t border-border/40">
-                                <td className="py-1.5 pr-3 font-medium">{monthShort(mkey)}</td>
-                                <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums font-medium">{occ(r.occ2026)}</td>
-                                <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-muted-foreground">{occ(r.occ2025)}</td>
-                                <td className={`whitespace-nowrap px-2 py-1.5 pr-3 text-right tabular-nums ${yoyTone(oD)}`}>{signed(oD, 1, " pt")}</td>
-                                <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums font-medium">{idr(r.adr2026)}</td>
-                                <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-muted-foreground">{idr(r.adr2025)}</td>
-                                <td className={`whitespace-nowrap px-2 py-1.5 pr-3 text-right tabular-nums ${yoyTone(aD)}`}>{signed(aD, 1, "%")}</td>
-                                <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums font-medium">{idr(r.rev2026)}</td>
-                                <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-muted-foreground">{idr(r.rev2025)}</td>
-                                <td className={`whitespace-nowrap px-2 py-1.5 text-right tabular-nums ${yoyTone(rD)}`}>{signed(rD, 1, "%")}</td>
-                              </tr>
-                            );
-                          })}
+                          {bo.months.map((r: YoyMonth) => (
+                            <tr key={r.month} className="border-t border-border/40">
+                              <td className="py-1.5 pr-3 font-medium">{monthShort(`2026-${String(r.month).padStart(2, "0")}`)}</td>
+                              {metrics.flatMap((mm) => {
+                                const cells = years.map((y) => {
+                                  const v = mm.get(r.byYear[y]);
+                                  return <td key={`${mm.key}-${y}`} className={`whitespace-nowrap px-2 py-1.5 text-right tabular-nums ${y === latest ? "font-medium" : "text-muted-foreground"}`}>{mm.fmt(v)}</td>;
+                                });
+                                if (prior) {
+                                  const d = mm.delta(mm.get(r.byYear[latest]), mm.get(r.byYear[prior]));
+                                  cells.push(<td key={`${mm.key}-d`} className={`whitespace-nowrap px-2 py-1.5 pr-3 text-right tabular-nums ${yoyTone(d)}`}>{signed(d, mm.key === "occ" ? 1 : 1, mm.suf)}</td>);
+                                }
+                                return cells;
+                              })}
+                            </tr>
+                          ))}
                         </tbody>
                         <tfoot>
                           <tr className="border-t-2 border-border font-semibold">
                             <td className="py-2 pr-3">Total</td>
-                            <td className="px-2 py-2 text-right tabular-nums">{occ(bt.occ2026)}</td>
-                            <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">{occ(bt.occ2025)}</td>
-                            <td className={`px-2 py-2 pr-3 text-right tabular-nums ${yoyTone(deltaPts(bt.occ2026, bt.occ2025))}`}>{signed(deltaPts(bt.occ2026, bt.occ2025), 1, " pt")}</td>
-                            <td className="px-2 py-2" colSpan={2} />
-                            <td className="px-2 py-2 pr-3" />
-                            <td className="px-2 py-2 text-right tabular-nums">{idr(bt.rev2026)}</td>
-                            <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">{idr(bt.rev2025)}</td>
-                            <td className={`px-2 py-2 text-right tabular-nums ${yoyTone(growthPct(bt.rev2026, bt.rev2025))}`}>{signed(growthPct(bt.rev2026, bt.rev2025), 1, "%")}</td>
+                            {metrics.flatMap((mm) => {
+                              const cells = years.map((y) => (
+                                <td key={`t-${mm.key}-${y}`} className={`whitespace-nowrap px-2 py-2 text-right tabular-nums ${y === latest ? "" : "text-muted-foreground"}`}>{mm.fmt(mm.tot(y))}</td>
+                              ));
+                              if (prior) {
+                                const d = mm.delta(mm.tot(latest), mm.tot(prior));
+                                cells.push(<td key={`t-${mm.key}-d`} className={`whitespace-nowrap px-2 py-2 pr-3 text-right tabular-nums ${yoyTone(d)}`}>{signed(d, 1, mm.suf)}</td>);
+                              }
+                              return cells;
+                            })}
                           </tr>
                         </tfoot>
                       </table>
                     </CardContent>
                   </Card>
                   <p className="text-xs text-muted-foreground">
-                    Actual occupancy, ADR and net revenue for each month, this year against last — both from the PU sheets (2025
-                    from the prior-year sheets). Δ is percentage points for occupancy, year-over-year growth for ADR and revenue
-                    (green = up on last year). Totals cover the months present in both years.
+                    Actual occupancy, ADR and net revenue for each month across every year we hold (from the PU sheets). Δ compares
+                    the latest year to the one before — percentage points for occupancy, growth for ADR and revenue (green = up).
+                    Totals cover the months present in all years.
                   </p>
                 </section>
               );

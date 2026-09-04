@@ -56,27 +56,37 @@ const emptyFig = (): Fig => ({ occ: null, rooms: null, adr: null, rev: null });
 
 function main() {
   const file = process.argv[2];
-  if (!file) throw new Error("Usage: tsx scripts/import-monthly.ts <file.xlsx> [PROPERTY]");
+  if (!file) throw new Error("Usage: tsx scripts/import-monthly.ts <file.xlsx> [PROPERTY] [YEARS]");
   const property = (process.argv[3] || detectProperty(file) || "").toUpperCase();
   if (!["BKDS", "BKDU", "BKV"].includes(property)) throw new Error(`Could not determine property from "${file}". Pass it explicitly.`);
+  // Optional comma-separated year filter (e.g. "2024") — import only those years'
+  // PU sheets. Without it, every year present in the file is imported.
+  const yearsArg = (process.argv[4] || "").trim();
+  const yearFilter = yearsArg ? new Set(yearsArg.split(",").map((y) => parseInt(y, 10))) : null;
 
   const wb = XLSX.readFile(file, { cellDates: false });
-  // PU sheets, keyed by own month, split by year (2026 = current, 2025 = prior).
-  const puSheets: { month: number; name: string }[] = [];
-  const pu2025: { month: number; name: string }[] = [];
+  // All PU sheets, keyed by (year, month). Skip "(1)" duplicate copies; keep the
+  // first sheet seen for a given year+month.
+  const puAll: { year: number; month: number; name: string }[] = [];
+  const seen = new Set<string>();
   for (const n of wb.SheetNames) {
     const low = n.toLowerCase();
-    if (!low.includes("pu")) continue;
+    if (!low.includes("pu") || low.includes("(1)")) continue;
+    const ym = low.match(/20\d\d/);
+    if (!ym) continue;
+    const y = parseInt(ym[0], 10);
+    if (yearFilter && !yearFilter.has(y)) continue;
     const mo = monthOf(low.split("pu")[0]) ?? monthOf(low.replace(/20\d\d|pu/g, " "));
     if (!mo) continue;
-    if (low.includes("2026")) puSheets.push({ month: mo, name: n });
-    else if (low.includes("2025")) pu2025.push({ month: mo, name: n });
+    const key = `${y}-${mo}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    puAll.push({ year: y, month: mo, name: n });
   }
-  puSheets.sort((a, b) => a.month - b.month);
-  pu2025.sort((a, b) => a.month - b.month);
-  if (puSheets.length === 0) throw new Error("No 'PU 2026' sheets found.");
-  const latest = puSheets[puSheets.length - 1];
-  const year = 2026;
+  puAll.sort((a, b) => a.year - b.year || a.month - b.month);
+  if (puAll.length === 0) throw new Error("No matching 'PU' sheets found.");
+  const pu2026 = puAll.filter((p) => p.year === 2026);
+  const latest2026 = pu2026.length ? pu2026[pu2026.length - 1] : null;
 
   // Parse one PU sheet into: header cols + a value lookup by (row-predicate, month).
   const parseSheet = (name: string) => {
@@ -116,61 +126,50 @@ function main() {
     rev: s.pick((l) => l.startsWith("revenue"), s.bcols, mo, s.bi + 1, s.bi + 6),
   });
 
-  const data = new Map<number, { actual: Fig; budget: Fig; otb: Fig }>();
-  const get = (mo: number) => {
-    if (!data.has(mo)) data.set(mo, { actual: emptyFig(), budget: emptyFig(), otb: emptyFig() });
-    return data.get(mo)!;
-  };
-
-  // Each sheet contributes its own month's actual + budget.
-  for (const { month, name } of puSheets) {
+  // Actuals for every (year, month); budget only for 2026 (the planning year).
+  const rowMap = new Map<string, { year: number; month: number; actual: Fig; budget: Fig; otb: Fig }>();
+  for (const { year: y, month, name } of puAll) {
     const s = parseSheet(name);
-    get(month).actual = actualFor(s, month);
-    get(month).budget = budgetFor(s, month);
+    rowMap.set(`${y}-${month}`, {
+      year: y, month,
+      actual: actualFor(s, month),
+      budget: y === 2026 ? budgetFor(s, month) : emptyFig(),
+      otb: emptyFig(),
+    });
   }
-  // The latest sheet contributes on-the-books for every month from itself onward.
-  // Build a FORWARD column map (columns at or after the sheet's own month) so a
-  // header that repeats the prior month at the far end — e.g. a January sheet
-  // whose last column is next-year December — doesn't make a forward month read
-  // the prior-year column.
-  const ls = parseSheet(latest.name);
-  const ownCol = ls.cols.get(latest.month) ?? 1;
-  const fwdCols = new Map<number, number>();
-  ls.hdr.forEach((v, j) => {
-    if (j === 0 || v == null || j < ownCol) return;
-    const mo = monthOf(v);
-    if (mo && !fwdCols.has(mo)) fwdCols.set(mo, j);
-  });
-  for (let mo = latest.month; mo <= 12; mo++) get(mo).otb = actualFor(ls, mo, fwdCols);
+
+  // On-the-books for 2026 forward months from the latest 2026 sheet. A FORWARD
+  // column map (columns at/after the sheet's own month) keeps a header that
+  // repeats the prior month at the far end from being read as a forward month.
+  if (latest2026) {
+    const ls = parseSheet(latest2026.name);
+    const ownCol = ls.cols.get(latest2026.month) ?? 1;
+    const fwdCols = new Map<number, number>();
+    ls.hdr.forEach((v, j) => { if (j === 0 || v == null || j < ownCol) return; const mo = monthOf(v); if (mo && !fwdCols.has(mo)) fwdCols.set(mo, j); });
+    for (let mo = latest2026.month; mo <= 12; mo++) {
+      const key = `2026-${mo}`;
+      const r = rowMap.get(key) ?? { year: 2026, month: mo, actual: emptyFig(), budget: emptyFig(), otb: emptyFig() };
+      r.otb = actualFor(ls, mo, fwdCols);
+      rowMap.set(key, r);
+    }
+  }
 
   const src = `monthly:${file.split("/").pop()}`;
-  const rows = Array.from(data.entries()).map(([mo, d]) => ({
+  const rows = Array.from(rowMap.values()).map((d) => ({
     propertyCode: property,
-    month: new Date(Date.UTC(year, mo - 1, 1)),
+    month: new Date(Date.UTC(d.year, d.month - 1, 1)),
     actualOcc: d.actual.occ, actualRooms: d.actual.rooms, actualAdr: d.actual.adr, actualRevenue: d.actual.rev,
     budgetOcc: d.budget.occ, budgetRooms: d.budget.rooms, budgetAdr: d.budget.adr, budgetRevenue: d.budget.rev,
     otbOcc: d.otb.occ, otbRooms: d.otb.rooms, otbAdr: d.otb.adr, otbRevenue: d.otb.rev,
     sourceFileId: src,
   }));
 
-  // Prior-year (2025) actuals — from the "<Month> PU 2025" sheets. Actual only;
-  // no budget/OTB. Powers the year-over-year business overview.
-  const rows2025 = pu2025.map(({ month, name }) => {
-    const a = actualFor(parseSheet(name), month);
-    return {
-      propertyCode: property,
-      month: new Date(Date.UTC(2025, month - 1, 1)),
-      actualOcc: a.occ, actualRooms: a.rooms, actualAdr: a.adr, actualRevenue: a.rev,
-      budgetOcc: null, budgetRooms: null, budgetAdr: null, budgetRevenue: null,
-      otbOcc: null, otbRooms: null, otbAdr: null, otbRevenue: null,
-      sourceFileId: src,
-    };
-  });
-  const allRows = [...rows2025, ...rows];
-
-  return prisma.monthlyStat.deleteMany({ where: { propertyCode: property } })
-    .then(() => prisma.monthlyStat.createMany({ data: allRows, skipDuplicates: true }))
-    .then(() => console.log(`  ✓ ${property}: ${rows.length} × 2026 + ${rows2025.length} × 2025 monthly rows (latest PU: ${latest.name.trim()})`));
+  const months = rows.map((r) => r.month);
+  const years = Array.from(new Set(rows.map((r) => r.month.getUTCFullYear()))).sort();
+  // Delete only the months we're (re)importing, so other years stay intact.
+  return prisma.monthlyStat.deleteMany({ where: { propertyCode: property, month: { in: months } } })
+    .then(() => prisma.monthlyStat.createMany({ data: rows, skipDuplicates: true }))
+    .then(() => console.log(`  ✓ ${property}: ${rows.length} monthly rows for ${years.join(", ")}${latest2026 ? ` (2026 budget/OTB from ${latest2026.name.trim()})` : ""}`));
 }
 
 Promise.resolve().then(main).catch((e) => { console.error(e); process.exit(1); }).finally(() => prisma.$disconnect());
