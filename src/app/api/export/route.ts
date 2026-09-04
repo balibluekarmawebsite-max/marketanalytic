@@ -14,8 +14,9 @@ export async function GET(req: Request) {
   const format = (url.searchParams.get("format") || "xlsx").toLowerCase();
   const p = url.searchParams.get("p") || undefined;
   const period = url.searchParams.get("period") || undefined;
+  const split = url.searchParams.get("split") || undefined;
 
-  const wb = await buildExport(dataset, { p, period });
+  const wb = await buildExport(dataset, { p, period, split });
   if (!wb) return NextResponse.json({ error: "Unknown export." }, { status: 400 });
 
   if (format === "csv") {

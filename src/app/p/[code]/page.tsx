@@ -80,7 +80,7 @@ export default async function PropertyPage({
 
       <div className="container space-y-8 py-8">
         <div className="flex justify-end">
-          <ExportButtons dataset="guest" p={code} period={period} label="Export guest data" />
+          <ExportButtons dataset="guest" p={code} period={period} label="Export guest data" monthly />
         </div>
         {/* KPIs */}
         <div className="space-y-2">

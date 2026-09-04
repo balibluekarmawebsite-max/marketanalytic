@@ -1,6 +1,7 @@
 import { getOverview, getPropertyComparison, getBudgetVsActualMonthly, getBusinessOverview, getPickupDetail, getRoomCategoryOccupancy } from "@/lib/analytics";
-import { getPropertyAnalytics, type Dim } from "@/lib/property-analytics";
+import { getPropertyAnalytics, type Dim, type PropertyAnalytics } from "@/lib/property-analytics";
 import { countryName } from "@/lib/countries";
+import { monthShort } from "@/lib/utils";
 
 // Builders that turn dashboard data into spreadsheet-ready sheets. Each sheet is
 // an array-of-arrays (first row = headers); numbers stay numbers so Excel can do
@@ -115,11 +116,57 @@ async function guestSheets(code: string, period: string): Promise<Sheet[]> {
   ];
 }
 
-/** Build the sheets for a requested dataset. */
-export async function buildExport(dataset: string, params: { p?: string; period?: string }): Promise<Workbook | null> {
+// Same guest breakdowns, but one row per (month, value) so each month is separate.
+// Every sheet carries a leading Month column; pivot on it in Excel.
+async function guestMonthlySheets(code: string, period: string): Promise<Sheet[]> {
+  const base = await getPropertyAnalytics(code, period);
+  if (!base || base.periodMonths.length === 0) return [];
+  const months = base.periodMonths;
+  const tag = (m: string) => `${monthShort(m)} ${m.slice(0, 4)}`;
+
+  // One reconciled read + one room-category read per month, in parallel.
+  const per = await Promise.all(
+    months.map(async (m) => ({
+      m,
+      a: await getPropertyAnalytics(code, m),
+      rc: await getRoomCategoryOccupancy(code, m),
+    })),
+  );
+
+  const dimByMonth = (first: string, sel: (a: PropertyAnalytics) => Dim[], nameFn?: (k: string) => string): Sheet => {
+    const aoa: Cell[][] = [["Month", first, "Bookings", "Room nights", "Revenue (IDR)"]];
+    for (const { m, a } of per) {
+      if (!a) continue;
+      for (const d of sel(a)) aoa.push([tag(m), nameFn ? nameFn(d.key) : d.key, d.reservations, Math.round(d.roomNights), Math.round(d.revenue)]);
+    }
+    return { name: `${first} by month`.slice(0, 31), aoa };
+  };
+
+  const roomCatByMonth = (): Sheet => {
+    const aoa: Cell[][] = [["Month", "Category", "Units", "Room nights sold", "Available room nights", "Occupancy %"]];
+    for (const { m, rc } of per) {
+      if (!rc || !rc.hasData) continue;
+      for (const g of rc.groups) aoa.push([tag(m), g.label, g.units, g.soldNights, g.availableNights, r2(g.occPct)]);
+    }
+    return { name: "Room category by month", aoa };
+  };
+
+  return [
+    dimByMonth("Nationality", (a) => a.nationalities, countryName),
+    dimByMonth("Market segment", (a) => a.segments),
+    dimByMonth("Agent", (a) => a.agents),
+    dimByMonth("Room type", (a) => a.roomTypes),
+    roomCatByMonth(),
+  ];
+}
+
+/** Build the sheets for a requested dataset. `split: "month"` breaks the guest
+ * data out into one row per month instead of a single period aggregate. */
+export async function buildExport(dataset: string, params: { p?: string; period?: string; split?: string }): Promise<Workbook | null> {
   const period = params.period || "2026";
   const code = (params.p || "BKDS").toUpperCase();
   const valid = PROPS.includes(code);
+  const monthly = params.split === "month";
 
   switch (dataset) {
     case "overview":
@@ -134,7 +181,10 @@ export async function buildExport(dataset: string, params: { p?: string; period?
       return { filename: `blue-karma-${code}-pace-${stamp()}`, sheets: [await paceSheet(code)] };
     case "guest":
       if (!valid) return null;
-      return { filename: `blue-karma-${code}-guest-analytics-${period}-${stamp()}`, sheets: await guestSheets(code, period) };
+      return {
+        filename: `blue-karma-${code}-guest-analytics-${monthly ? "by-month-" : ""}${period}-${stamp()}`,
+        sheets: monthly ? await guestMonthlySheets(code, period) : await guestSheets(code, period),
+      };
     case "workbook": {
       const sheets: Sheet[] = [await overviewSheet(), await comparisonSheet(period)];
       for (const c of PROPS) sheets.push(await budgetSheet(c, period));
