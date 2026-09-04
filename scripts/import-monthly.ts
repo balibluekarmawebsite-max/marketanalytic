@@ -8,6 +8,8 @@
  *     sold), own-month column.
  *   • On-the-books (forward) → the LATEST PU sheet's forward columns (Occ on
  *     Hand / ADR / Revenue Nett / Room Sold), for each month from that month on.
+ *   • Prior-year closing → the LATEST PU sheet's "Closing 2025/2026" block, which
+ *     fills the forward months that no 2025 PU sheet reaches (Oct–Dec 2025).
  *
  * Loads MonthlyStat (property, month, actual*, budget*, otb*). Same basis on
  * both sides, so budget-vs-actual lines up.
@@ -100,6 +102,11 @@ function main() {
     let bi = -1;
     for (let i = 0; i < rows.length; i++) if (label(rows[i]).startsWith("budget")) { bi = i; break; }
     const bcols = bi >= 0 ? monthCols(rows[bi]) : new Map<number, number>();
+    // Closing block header (col0 starts "closing", e.g. "Closing 2025/2026") — the
+    // prior-year actuals (Occ % / ADR / Revenue) for each forward month, no room count.
+    let ci = -1;
+    for (let i = 0; i < rows.length; i++) if (label(rows[i]).startsWith("closing")) { ci = i; break; }
+    const ccols = ci >= 0 ? monthCols(rows[ci]) : new Map<number, number>();
 
     const pick = (rowPred: (l: string) => boolean, colMap: Map<number, number>, mo: number, from = 0, to = rows.length): number | null => {
       for (let i = from; i < Math.min(to, rows.length); i++) {
@@ -110,7 +117,7 @@ function main() {
       }
       return null;
     };
-    return { rows, cols, bcols, bi, pick, hdr: hi >= 0 ? (rows[hi] as unknown[]) : [] };
+    return { rows, cols, bcols, bi, ccols, ci, pick, hdr: hi >= 0 ? (rows[hi] as unknown[]) : [] };
   };
 
   const actualFor = (s: ReturnType<typeof parseSheet>, mo: number, colMap: Map<number, number> = s.cols): Fig => ({
@@ -124,6 +131,14 @@ function main() {
     rooms: (() => { const r = s.pick((l) => l.startsWith("room sold"), s.bcols, mo, s.bi + 1, s.bi + 6); return r == null ? null : Math.round(r); })(),
     adr: s.pick((l) => l === "adr", s.bcols, mo, s.bi + 1, s.bi + 6),
     rev: s.pick((l) => l.startsWith("revenue"), s.bcols, mo, s.bi + 1, s.bi + 6),
+  });
+  // Prior-year closing actuals from the "Closing 2025/2026" block. Occ % / ADR /
+  // Revenue only — that block carries no room count, so rooms stays null.
+  const closingFor = (s: ReturnType<typeof parseSheet>, mo: number, colMap: Map<number, number>): Fig => ({
+    occ: asPct(s.pick((l) => l.startsWith("occ"), colMap, mo, s.ci + 1, s.ci + 6)),
+    rooms: null,
+    adr: s.pick((l) => l === "adr", colMap, mo, s.ci + 1, s.ci + 6),
+    rev: s.pick((l) => l.startsWith("revenue"), colMap, mo, s.ci + 1, s.ci + 6),
   });
 
   // Actuals for every (year, month); budget only for 2026 (the planning year).
@@ -151,6 +166,23 @@ function main() {
       const r = rowMap.get(key) ?? { year: 2026, month: mo, actual: emptyFig(), budget: emptyFig(), otb: emptyFig() };
       r.otb = actualFor(ls, mo, fwdCols);
       rowMap.set(key, r);
+    }
+
+    // Prior-year (2025) closing actuals for the forward months (own month → Dec),
+    // read from the latest sheet's "Closing 2025/2026" block. Each forward column
+    // holds last year's figure for that month, so Sept→Dec of the block = Sept→Dec
+    // 2025. Only fill months not already imported from a 2025 PU sheet, so the
+    // existing Sept 2025 row (which carries a room count) is preserved.
+    if (ls.ci >= 0) {
+      const priorYear = latest2026.year - 1; // the "Closing" block is last year's actuals
+      const cOwnCol = ls.ccols.get(latest2026.month) ?? 1;
+      const cFwd = new Map<number, number>();
+      (ls.rows[ls.ci] as unknown[]).forEach((v, j) => { if (j === 0 || v == null || j < cOwnCol) return; const mo = monthOf(v); if (mo && !cFwd.has(mo)) cFwd.set(mo, j); });
+      for (let mo = latest2026.month; mo <= 12; mo++) {
+        const key = `${priorYear}-${mo}`;
+        if (rowMap.has(key)) continue; // keep the PU-year sheet row (has rooms)
+        rowMap.set(key, { year: priorYear, month: mo, actual: closingFor(ls, mo, cFwd), budget: emptyFig(), otb: emptyFig() });
+      }
     }
   }
 
