@@ -10,6 +10,7 @@ export function LoginForm({ next }: { next: string }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -67,6 +68,22 @@ export function LoginForm({ next }: { next: string }) {
           >
             {busy ? "Signing in…" : "Sign in"}
           </button>
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setShowHelp((v) => !v)}
+              className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              Forgot your password?
+            </button>
+            {showHelp && (
+              <p className="mt-1.5 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                Ask a Blue Karma admin to reset it — once signed in they can do it under
+                <span className="font-medium text-foreground"> Users</span>. You&apos;ll get a new password to sign in with,
+                then you can change it yourself under <span className="font-medium text-foreground">Account</span>.
+              </p>
+            )}
+          </div>
         </form>
       </CardContent>
     </Card>
