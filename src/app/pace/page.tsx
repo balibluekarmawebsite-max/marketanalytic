@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { getPickupDetail, type CurvePoint } from "@/lib/analytics";
+import { ExportButtons } from "@/components/export-buttons";
 import { monthShort } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -81,6 +82,9 @@ export default async function PacePage({ searchParams }: { searchParams: { p?: s
           <Card><CardContent className="p-6 text-sm text-muted-foreground">No pickup data for this property.</CardContent></Card>
         ) : (
           <>
+            <div className="flex justify-end">
+              <ExportButtons dataset="pace" p={code} />
+            </div>
             {/* Summary */}
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               {[

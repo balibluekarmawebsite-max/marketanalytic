@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getOverview, getForwardLook, type PropertyPerf, type PropertyPace } from "@/lib/analytics";
+import { ExportButtons } from "@/components/export-buttons";
 import { formatIDRFull, formatInt, formatNum0, formatPct2, monthShort } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -204,11 +205,14 @@ export default async function Home() {
         ) : (
           <>
             <section className="space-y-3">
-              <div className="flex items-baseline justify-between">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <h2 className="text-lg font-semibold">Group performance · 2026 YTD</h2>
-                <span className="text-xs text-muted-foreground">
-                  {overview!.dataFrom} → {overview!.dataTo} · {formatInt(overview!.rowCount)} daily records
-                </span>
+                <div className="flex flex-wrap items-center gap-3">
+                  <ExportButtons dataset="workbook" period="2026" label="Download everything" />
+                  <span className="text-xs text-muted-foreground">
+                    {overview!.dataFrom} → {overview!.dataTo} · {formatInt(overview!.rowCount)} daily records
+                  </span>
+                </div>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <Kpi label="Room revenue YTD" value={formatIDRFull(overview!.ytdRevenue)} sub="3 properties" />

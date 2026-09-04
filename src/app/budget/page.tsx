@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getBudgetVsActual } from "@/lib/analytics";
+import { ExportButtons } from "@/components/export-buttons";
 import { formatIDRFull, formatInt, formatPct2, monthShort } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -92,6 +93,9 @@ export default async function BudgetPage({
           </Card>
         ) : (
           <>
+            <div className="flex justify-end">
+              <ExportButtons dataset="budget" p={code} period={period} />
+            </div>
             {/* KPI strip */}
             <div className="space-y-2">
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { getPropertyComparison, type CompareRow } from "@/lib/analytics";
+import { ExportButtons } from "@/components/export-buttons";
 import { countryName } from "@/lib/countries";
 import { formatIDRFull, formatInt, formatPct2, monthShort } from "@/lib/utils";
 
@@ -86,6 +87,9 @@ export default async function ComparePage({ searchParams }: { searchParams: { pe
       </header>
 
       <div className="container space-y-6 py-8">
+        <div className="flex justify-end">
+          <ExportButtons dataset="comparison" period={period} />
+        </div>
         <Card>
           <CardContent className="overflow-x-auto pt-6">
             <table className="w-full text-sm">

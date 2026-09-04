@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DimTable, type DimRow } from "@/components/dim-table";
+import { ExportButtons } from "@/components/export-buttons";
 import { getPropertyAnalytics, type Dim } from "@/lib/property-analytics";
 import { formatIDRFull, formatInt, monthShort } from "@/lib/utils";
 import { countryName as cname } from "@/lib/countries";
@@ -72,6 +73,9 @@ export default async function PropertyPage({
       </header>
 
       <div className="container space-y-8 py-8">
+        <div className="flex justify-end">
+          <ExportButtons dataset="guest" p={code} period={period} label="Export guest data" />
+        </div>
         {/* KPIs */}
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
