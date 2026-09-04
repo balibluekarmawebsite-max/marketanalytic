@@ -18,12 +18,15 @@ const prisma = new PrismaClient();
 // ---------------------------------------------------------------------------
 // 1 · Properties
 // ---------------------------------------------------------------------------
-// roomsAvailable is the confirmed physical room count per property (matches the
-// PU-sheet "Room" totals and the room-inventory breakdown in room-inventory.ts).
+// roomsAvailable is the RevPAR denominator — the operational/sellable room base
+// the DailyStat revenue feed is scaled to (BKDU = 38; BKDS/BKV not yet known, so
+// RevPAR shows "needs room count"). This is NOT the physical room count: the
+// physical inventory (BKDS 18, BKDU 20, BKV 15) lives in room-inventory.ts and
+// drives room-category occupancy, which is a different room basis.
 const properties = [
-  { code: "BKDS", name: "Blue Karma Dijiwa Seminyak", city: "Seminyak", roomsAvailable: 18 },
-  { code: "BKDU", name: "Blue Karma Dijiwa Ubud", city: "Ubud", roomsAvailable: 20 },
-  { code: "BKV", name: "Blue Karma Village", city: "Seminyak", roomsAvailable: 15 },
+  { code: "BKDS", name: "Blue Karma Dijiwa Seminyak", city: "Seminyak", roomsAvailable: null },
+  { code: "BKDU", name: "Blue Karma Dijiwa Ubud", city: "Ubud", roomsAvailable: 38 },
+  { code: "BKV", name: "Blue Karma Village", city: "Seminyak", roomsAvailable: null },
 ];
 
 // ---------------------------------------------------------------------------

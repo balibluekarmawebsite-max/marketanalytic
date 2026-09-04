@@ -179,9 +179,11 @@ export default async function PropertyPage({
                   {rc.skippedMonths.length > 0 && (
                     <> {rc.skippedMonths.length} month{rc.skippedMonths.length === 1 ? "" : "s"} in this period had no room-type detail in the arrival file and are excluded: {rc.skippedMonths.map((m) => `${monthShort(m)} ${m.slice(0, 4)}`).join(", ")}.</>
                   )}{" "}
-                  Categories the booking system records under one code are grouped so each percentage has an honest denominator; the members are listed under each group.
+                  {rc.groups.some((g) => g.members.length > 1) && (
+                    <>Rooms the booking system records under one code are shown together, with the members listed. </>
+                  )}
                   {rc.groups.some((g) => (g.occPct ?? 0) > 100) && (
-                    <> A small category can read <span className="text-amber-600">100%+</span> in a single month when the arrival list logs more room-nights than the rooms can hold (same-room turnover on the check-out day); it settles below 100% over a full period.</>
+                    <> A line reads <span className="text-amber-600">100%+</span> when the bookings recorded under it span more rooms than its nominal unit count — a combined villa (a 4-bedroom is two villas joined), or same-room turnover within a single month. The base-room lines and the All-rooms total stay within capacity.</>
                   )}
                 </p>
               </>

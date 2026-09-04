@@ -7,16 +7,18 @@
  * (total known room-nights ÷ units×days tracks the PU-sheet occupancy to within
  * a couple of points).
  *
- * One wrinkle: the arrival list's room-type LABELS are coarser than the physical
- * categories. Where several physical categories share a single booking code
- * (e.g. BKV "Suite Room" covers both Suite Joglo and One Bedroom Suite), or where
- * "combined" villas draw from a shared pool of the same physical villas, those
- * categories are folded into one OCCUPANCY GROUP so the percentage has an honest
- * denominator and never runs past 100%. Each group still lists its member
- * categories, so the full breakdown is visible.
+ * Each physical room category is its own line so every room is visible, even in
+ * a month where it had no bookings. A line is only merged with another when the
+ * booking system genuinely can't tell them apart — BKV "Suite Room" covers both
+ * Suite Joglo and One Bedroom Suite under one code, so those two stay together
+ * (with both members listed). "Combined" villas are shown on their own line; a
+ * combined booking (e.g. a 4-bedroom made of two 2-bedroom villas) spans more
+ * rooms than its one nominal unit, so that line can read above 100% — the note
+ * says so, and the base-room lines plus the All-rooms total stay within capacity.
  *
  * To change a mapping, edit the group's `reservationLabels` (must match the
- * ReservationFact.roomType strings exactly) or its `members`.
+ * ReservationFact.roomType strings exactly) or its `members`. Order here is the
+ * display order.
  */
 
 export type InvCategory = { name: string; units: number };
@@ -46,19 +48,16 @@ export const ROOM_INVENTORY: Record<string, PropertyInventory> = {
     code: "BKDS",
     totalUnits: 18,
     groups: [
+      { key: "suite", label: "One bedroom suite", members: [u("One bedroom suite", 7)], reservationLabels: ["Suite Room"] },
+      { key: "suitecombine", label: "One bedroom suite (combine)", members: [u("One bedroom suite combine", 2)], reservationLabels: ["1BR Suite (Combine)"], note: "Two suites joined and sold as one unit." },
+      { key: "poolsuite", label: "One bedroom suite w/ private pool", members: [u("One bedroom suite w/ private pool", 6)], reservationLabels: ["1BR Private Pool Villa"] },
+      { key: "pool2br", label: "Two bedroom private pool villa", members: [u("Two bedroom private pool villa", 2)], reservationLabels: ["2BR Private Pool Villa"] },
       {
-        key: "suite",
-        label: "One bedroom suite",
-        members: [u("One bedroom suite", 7), u("One bedroom suite combine", 2)],
-        reservationLabels: ["Suite Room", "1BR Suite (Combine)"],
-        note: "Standard and combined suites share one booking code.",
-      },
-      {
-        key: "poolvilla",
-        label: "Private pool villas",
-        members: [u("One bedroom suite w/ private pool", 6), u("Two bedroom private pool villa", 2), u("Two bedroom pool villa combine", 1)],
-        reservationLabels: ["1BR Private Pool Villa", "2BR Private Pool Villa", "2BR Private Pool (Combine)", "4BR Private Pool Villa (Combined)"],
-        note: "1BR, 2BR and combined pool villas are the same physical villas rented in different configurations, so occupancy is measured across the whole pool.",
+        key: "poolcombine",
+        label: "Two bedroom pool villa (combine)",
+        members: [u("Two bedroom pool villa combine", 1)],
+        reservationLabels: ["2BR Private Pool (Combine)", "4BR Private Pool Villa (Combined)"],
+        note: "Combined pool villas — a 4-bedroom is two 2-bedroom villas joined — so bookings here span more than the one nominal unit and this line can read above 100%.",
       },
     ],
   },

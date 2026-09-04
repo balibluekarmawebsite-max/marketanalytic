@@ -745,18 +745,26 @@ export async function getRoomCategoryOccupancy(code: string, period: string): Pr
   else if (period === "all") { inPeriod = () => true; periodLabel = "All time"; }
   else { inPeriod = (m) => m.startsWith(period); periodLabel = `${period} YTD`; }
 
-  // Split each in-period month into known vs Unknown room-nights → "clean" months
-  // are those with room-type detail and no Unknown leakage.
-  const monthAgg = new Map<string, { known: number; unknown: number }>();
+  // Every reservation label that maps to a group. A KNOWN label that is not in
+  // this set ("orphan" — e.g. a new/renamed OTA label a future import introduces)
+  // would otherwise count toward the month's denominator but never reach any
+  // group's numerator, silently understating occupancy. So an orphan disqualifies
+  // the month just like Unknown leakage does.
+  const mappedLabels = new Set(inv.groups.flatMap((g) => g.reservationLabels));
+
+  // Split each in-period month into known / Unknown / orphan room-nights → "clean"
+  // months carry a full room-type breakdown with no Unknown and no orphan nights.
+  const monthAgg = new Map<string, { known: number; unknown: number; orphan: number }>();
   for (const f of facts) {
     const k = ym(f.month);
     if (!inPeriod(k)) continue;
-    const e = monthAgg.get(k) ?? { known: 0, unknown: 0 };
+    const e = monthAgg.get(k) ?? { known: 0, unknown: 0, orphan: 0 };
     if (!f.roomType || f.roomType === "Unknown") e.unknown += f.roomNights;
+    else if (!mappedLabels.has(f.roomType)) e.orphan += f.roomNights;
     else e.known += f.roomNights;
     monthAgg.set(k, e);
   }
-  const isClean = (v: { known: number; unknown: number }) => v.known > 0 && v.unknown === 0;
+  const isClean = (v: { known: number; unknown: number; orphan: number }) => v.known > 0 && v.unknown === 0 && v.orphan === 0;
   const cleanMonths = Array.from(monthAgg.entries()).filter(([, v]) => isClean(v)).map(([k]) => k).sort();
   const skippedMonths = Array.from(monthAgg.entries()).filter(([, v]) => !isClean(v)).map(([k]) => k).sort();
   const cleanSet = new Set(cleanMonths);
@@ -781,7 +789,7 @@ export async function getRoomCategoryOccupancy(code: string, period: string): Pr
       revenue: rev, adr: nts > 0 ? rev / nts : null,
     };
   });
-  groups.sort((a, b) => b.units - a.units || b.revenue - a.revenue);
+  // Keep the room-inventory.ts order (rooms grouped by type), not a value sort.
 
   const soldNights = groups.reduce((s, g) => s + g.soldNights, 0);
   const revenue = groups.reduce((s, g) => s + g.revenue, 0);
