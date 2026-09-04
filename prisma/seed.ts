@@ -18,13 +18,12 @@ const prisma = new PrismaClient();
 // ---------------------------------------------------------------------------
 // 1 · Properties
 // ---------------------------------------------------------------------------
-// roomsAvailable is null where we don't yet have a confirmed count. Occupancy
-// math stays disabled for a property until its real room count is filled in.
-// TODO(blue-karma): confirm BKDS and BKV room counts and update below.
+// roomsAvailable is the confirmed physical room count per property (matches the
+// PU-sheet "Room" totals and the room-inventory breakdown in room-inventory.ts).
 const properties = [
-  { code: "BKDS", name: "Blue Karma Dijiwa Seminyak", city: "Seminyak", roomsAvailable: null },
-  { code: "BKDU", name: "Blue Karma Dijiwa Ubud", city: "Ubud", roomsAvailable: 38 },
-  { code: "BKV", name: "Blue Karma Village", city: "Seminyak", roomsAvailable: null },
+  { code: "BKDS", name: "Blue Karma Dijiwa Seminyak", city: "Seminyak", roomsAvailable: 18 },
+  { code: "BKDU", name: "Blue Karma Dijiwa Ubud", city: "Ubud", roomsAvailable: 20 },
+  { code: "BKV", name: "Blue Karma Village", city: "Seminyak", roomsAvailable: 15 },
 ];
 
 // ---------------------------------------------------------------------------

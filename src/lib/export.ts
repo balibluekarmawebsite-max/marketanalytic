@@ -1,4 +1,4 @@
-import { getOverview, getPropertyComparison, getBudgetVsActualMonthly, getBusinessOverview, getPickupDetail } from "@/lib/analytics";
+import { getOverview, getPropertyComparison, getBudgetVsActualMonthly, getBusinessOverview, getPickupDetail, getRoomCategoryOccupancy } from "@/lib/analytics";
 import { getPropertyAnalytics, type Dim } from "@/lib/property-analytics";
 import { countryName } from "@/lib/countries";
 
@@ -88,6 +88,21 @@ function dimSheet(name: string, dims: Dim[], nameFn?: (k: string) => string): Sh
   return { name: name.slice(0, 31), aoa };
 }
 
+async function roomCategorySheet(code: string, period: string): Promise<Sheet> {
+  const rc = await getRoomCategoryOccupancy(code, period);
+  const aoa: Cell[][] = [["Category", "Members", "Units", "Room nights sold", "Available room nights", "Occupancy %"]];
+  if (rc) {
+    for (const g of rc.groups) {
+      aoa.push([g.label, g.members.map((m) => `${m.units} ${m.name}`).join("; "), g.units, g.soldNights, g.availableNights, r2(g.occPct)]);
+    }
+    aoa.push(["All rooms", "", rc.totalUnits, rc.soldNights, rc.availableNights, r2(rc.occPct)]);
+    aoa.push([]);
+    aoa.push(["Months included", rc.cleanMonths.join(", ")]);
+    if (rc.skippedMonths.length) aoa.push(["Months excluded (no room-type detail)", rc.skippedMonths.join(", ")]);
+  }
+  return { name: `Room category ${code}`.slice(0, 31), aoa };
+}
+
 async function guestSheets(code: string, period: string): Promise<Sheet[]> {
   const a = await getPropertyAnalytics(code, period);
   if (!a) return [];
@@ -96,6 +111,7 @@ async function guestSheets(code: string, period: string): Promise<Sheet[]> {
     dimSheet("Market segment", a.segments),
     dimSheet("Agent", a.agents),
     dimSheet("Room type", a.roomTypes),
+    await roomCategorySheet(code, period),
   ];
 }
 

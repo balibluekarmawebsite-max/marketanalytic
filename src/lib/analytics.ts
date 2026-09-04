@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { monthShort } from "@/lib/utils";
 import { normalizeSegment } from "@/lib/ingest/segment";
+import { ROOM_INVENTORY, daysInMonthYM } from "@/lib/room-inventory";
 
 export type MonthAgg = {
   month: string; // "YYYY-MM"
@@ -685,5 +686,110 @@ export async function getOverview(): Promise<Overview> {
     dataFrom: rows.length ? new Date(rows[0].date).toISOString().slice(0, 10) : null,
     dataTo: rows.length ? new Date(rows[rows.length - 1].date).toISOString().slice(0, 10) : null,
     rowCount: rows.length,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Room-category occupancy — % of each room category sold, from the arrival list.
+// ---------------------------------------------------------------------------
+export type RoomCatGroup = {
+  key: string;
+  label: string;
+  members: { name: string; units: number }[];
+  units: number;
+  note?: string;
+  labels: string[];
+  soldNights: number;
+  availableNights: number;
+  occPct: number | null;
+  revenue: number;
+  adr: number | null;
+};
+export type RoomCategoryOccupancy = {
+  code: string;
+  name: string;
+  periodLabel: string;
+  totalUnits: number;
+  cleanMonths: string[]; // months included (had room-type detail)
+  skippedMonths: string[]; // months in the period with only property-level ("Unknown") data
+  availableNights: number;
+  soldNights: number;
+  revenue: number;
+  occPct: number | null;
+  groups: RoomCatGroup[];
+  hasData: boolean;
+};
+
+/**
+ * Room-nights sold vs available, per room category, for one property.
+ *
+ * Room-nights come straight from the arrival list (raw ReservationFact — NOT the
+ * daily-reconciled figures), which represent physical room-nights. Availability
+ * is units × calendar days. Only months that carry a room-type breakdown are
+ * counted; months whose arrival file had no room type (all "Unknown") are listed
+ * as skipped so the percentages stay honest. Categories the booking system can't
+ * tell apart are merged into groups (see room-inventory.ts).
+ */
+export async function getRoomCategoryOccupancy(code: string, period: string): Promise<RoomCategoryOccupancy | null> {
+  const inv = ROOM_INVENTORY[code];
+  const [prop, facts] = await Promise.all([
+    prisma.property.findUnique({ where: { code } }),
+    prisma.reservationFact.findMany({ where: { propertyCode: code } }),
+  ]);
+  if (!inv || !prop) return null;
+
+  const ym = (d: Date) => new Date(d).toISOString().slice(0, 7);
+  let inPeriod: (m: string) => boolean;
+  let periodLabel: string;
+  if (/^\d{4}-\d{2}$/.test(period)) { inPeriod = (m) => m === period; periodLabel = `${monthShort(period)} ${period.slice(0, 4)}`; }
+  else if (period === "all") { inPeriod = () => true; periodLabel = "All time"; }
+  else { inPeriod = (m) => m.startsWith(period); periodLabel = `${period} YTD`; }
+
+  // Split each in-period month into known vs Unknown room-nights → "clean" months
+  // are those with room-type detail and no Unknown leakage.
+  const monthAgg = new Map<string, { known: number; unknown: number }>();
+  for (const f of facts) {
+    const k = ym(f.month);
+    if (!inPeriod(k)) continue;
+    const e = monthAgg.get(k) ?? { known: 0, unknown: 0 };
+    if (!f.roomType || f.roomType === "Unknown") e.unknown += f.roomNights;
+    else e.known += f.roomNights;
+    monthAgg.set(k, e);
+  }
+  const isClean = (v: { known: number; unknown: number }) => v.known > 0 && v.unknown === 0;
+  const cleanMonths = Array.from(monthAgg.entries()).filter(([, v]) => isClean(v)).map(([k]) => k).sort();
+  const skippedMonths = Array.from(monthAgg.entries()).filter(([, v]) => !isClean(v)).map(([k]) => k).sort();
+  const cleanSet = new Set(cleanMonths);
+  const totalDays = cleanMonths.reduce((s, m) => s + daysInMonthYM(m), 0);
+
+  // Sold nights + revenue per reservation label over the clean months.
+  const soldByLabel = new Map<string, { nts: number; rev: number }>();
+  for (const f of facts) {
+    if (!cleanSet.has(ym(f.month)) || !f.roomType || f.roomType === "Unknown") continue;
+    const e = soldByLabel.get(f.roomType) ?? { nts: 0, rev: 0 };
+    e.nts += f.roomNights; e.rev += num(f.revenue); soldByLabel.set(f.roomType, e);
+  }
+
+  const groups: RoomCatGroup[] = inv.groups.map((g) => {
+    const units = g.members.reduce((s, m) => s + m.units, 0);
+    let nts = 0, rev = 0;
+    for (const lab of g.reservationLabels) { const e = soldByLabel.get(lab); if (e) { nts += e.nts; rev += e.rev; } }
+    const avail = units * totalDays;
+    return {
+      key: g.key, label: g.label, members: g.members, units, note: g.note, labels: g.reservationLabels,
+      soldNights: nts, availableNights: avail, occPct: avail > 0 ? (nts / avail) * 100 : null,
+      revenue: rev, adr: nts > 0 ? rev / nts : null,
+    };
+  });
+  groups.sort((a, b) => b.units - a.units || b.revenue - a.revenue);
+
+  const soldNights = groups.reduce((s, g) => s + g.soldNights, 0);
+  const revenue = groups.reduce((s, g) => s + g.revenue, 0);
+  const availableNights = inv.totalUnits * totalDays;
+  return {
+    code, name: prop.name, periodLabel, totalUnits: inv.totalUnits,
+    cleanMonths, skippedMonths, availableNights, soldNights, revenue,
+    occPct: availableNights > 0 ? (soldNights / availableNights) * 100 : null,
+    groups, hasData: cleanMonths.length > 0,
   };
 }

@@ -5,13 +5,15 @@ import { Badge } from "@/components/ui/badge";
 import { DimTable, type DimRow } from "@/components/dim-table";
 import { ExportButtons } from "@/components/export-buttons";
 import { getPropertyAnalytics, type Dim } from "@/lib/property-analytics";
-import { formatIDRFull, formatInt, monthShort } from "@/lib/utils";
+import { getRoomCategoryOccupancy } from "@/lib/analytics";
+import { formatIDRFull, formatInt, formatPct2, monthShort } from "@/lib/utils";
 import { countryName as cname } from "@/lib/countries";
 
 export const dynamic = "force-dynamic";
 
 const VALID = ["BKDS", "BKDU", "BKV"];
 const ACCENT: Record<string, string> = { BKDS: "text-bkds", BKDU: "text-bkdu", BKV: "text-bkv" };
+const BAR: Record<string, string> = { BKDS: "bg-bkds", BKDU: "bg-bkdu", BKV: "bg-bkv" };
 
 const toRows = (dims: Dim[], nameFn?: (k: string) => string, hrefFn?: (k: string) => string): DimRow[] =>
   dims.map((d) => ({
@@ -34,10 +36,14 @@ export default async function PropertyPage({
   const period = searchParams.period ?? "2026";
   const seg = searchParams.seg;
   const agent = searchParams.agent;
-  const a = await getPropertyAnalytics(code, period, seg, agent);
+  const [a, rc] = await Promise.all([
+    getPropertyAnalytics(code, period, seg, agent),
+    getRoomCategoryOccupancy(code, period),
+  ]);
   if (!a) notFound();
 
   const accent = ACCENT[code] ?? "text-primary";
+  const bar = BAR[code] ?? "bg-primary";
   const periods = [{ k: "2026", label: "2026 YTD" }, { k: "2025", label: "2025 YTD" }, { k: "all", label: "All time" }];
   const maxCell = Math.max(1, ...a.matrix.flatMap((m) => m.byMonth));
   const ctx = agent ? `&agent=${encodeURIComponent(agent)}` : seg ? `&seg=${encodeURIComponent(seg)}` : "";
@@ -102,6 +108,94 @@ export default async function PropertyPage({
             </p>
           )}
         </div>
+
+        {/* Room category occupancy */}
+        {rc && (
+          <section className="space-y-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-lg font-semibold">Room category occupancy</h2>
+              <span className="text-xs text-muted-foreground">
+                {rc.totalUnits} rooms{rc.hasData ? ` · ${rc.cleanMonths.length} month${rc.cleanMonths.length === 1 ? "" : "s"} with room-type detail` : ""}
+              </span>
+            </div>
+            {rc.hasData ? (
+              <>
+                <Card>
+                  <CardContent className="overflow-x-auto pt-6">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-[11px] uppercase tracking-wide text-muted-foreground">
+                          <th className="py-2 pr-3 text-left font-medium">Category</th>
+                          <th className="px-2 py-2 text-right font-medium">Units</th>
+                          <th className="px-2 py-2 text-right font-medium">Room-nights sold / available</th>
+                          <th className="px-3 py-2 text-left font-medium" style={{ minWidth: 170 }}>% sold</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rc.groups.map((g) => (
+                          <tr key={g.key} className="border-t border-border/40 align-top">
+                            <td className="py-2.5 pr-3">
+                              <div className="font-medium">{g.label}</div>
+                              {(g.members.length > 1 || g.note) && (
+                                <div className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+                                  {g.members.length > 1 && <span>{g.members.map((m) => `${m.units} ${m.name}`).join(" · ")}</span>}
+                                  {g.note && <span className="block italic">{g.note}</span>}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-2 py-2.5 text-right tabular-nums">{g.units}</td>
+                            <td className="whitespace-nowrap px-2 py-2.5 text-right tabular-nums">
+                              {formatInt(g.soldNights)} <span className="text-muted-foreground">/ {formatInt(g.availableNights)}</span>
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <div className="flex items-center gap-2">
+                                <div className="h-2.5 flex-1 rounded-full bg-muted">
+                                  <div className={`h-full rounded-full ${bar} opacity-80`} style={{ width: `${Math.min(100, Math.max(2, g.occPct ?? 0))}%` }} />
+                                </div>
+                                <span
+                                  title={g.occPct == null ? undefined : `${formatPct2(g.occPct)} · ${formatInt(g.soldNights)} of ${formatInt(g.availableNights)} room-nights`}
+                                  className={`w-16 shrink-0 text-right text-sm font-semibold tabular-nums ${g.occPct != null && g.occPct > 100 ? "text-amber-600" : ""}`}
+                                >{g.occPct == null ? "—" : g.occPct > 100 ? "100%+" : formatPct2(g.occPct)}</span>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2">
+                          <td className="py-2.5 pr-3 font-semibold">All rooms</td>
+                          <td className="px-2 py-2.5 text-right font-semibold tabular-nums">{rc.totalUnits}</td>
+                          <td className="whitespace-nowrap px-2 py-2.5 text-right font-semibold tabular-nums">{formatInt(rc.soldNights)} <span className="font-normal text-muted-foreground">/ {formatInt(rc.availableNights)}</span></td>
+                          <td className="px-3 py-2.5 font-semibold tabular-nums">{rc.occPct == null ? "—" : rc.occPct > 100 ? "100%+" : formatPct2(rc.occPct)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </CardContent>
+                </Card>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  % sold = room-nights sold ÷ (units × nights), from the arrival list, over the{" "}
+                  {rc.cleanMonths.length} month{rc.cleanMonths.length === 1 ? "" : "s"} that carry a room-type breakdown
+                  ({monthShort(rc.cleanMonths[0])} {rc.cleanMonths[0]?.slice(0, 4)} – {monthShort(rc.cleanMonths[rc.cleanMonths.length - 1])} {rc.cleanMonths[rc.cleanMonths.length - 1]?.slice(0, 4)}).
+                  {rc.skippedMonths.length > 0 && (
+                    <> {rc.skippedMonths.length} month{rc.skippedMonths.length === 1 ? "" : "s"} in this period had no room-type detail in the arrival file and are excluded: {rc.skippedMonths.map((m) => `${monthShort(m)} ${m.slice(0, 4)}`).join(", ")}.</>
+                  )}{" "}
+                  Categories the booking system records under one code are grouped so each percentage has an honest denominator; the members are listed under each group.
+                  {rc.groups.some((g) => (g.occPct ?? 0) > 100) && (
+                    <> A small category can read <span className="text-amber-600">100%+</span> in a single month when the arrival list logs more room-nights than the rooms can hold (same-room turnover on the check-out day); it settles below 100% over a full period.</>
+                  )}
+                </p>
+              </>
+            ) : (
+              <Card>
+                <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                  No room-type breakdown is available for {rc.periodLabel}
+                  {rc.skippedMonths.length > 0 && <> — the arrival file{rc.skippedMonths.length === 1 ? "" : "s"} for {rc.skippedMonths.map((m) => `${monthShort(m)} ${m.slice(0, 4)}`).join(", ")} recorded every booking as “Unknown” room type</>}.
+                  Pick a different period to see room-category occupancy.
+                </CardContent>
+              </Card>
+            )}
+          </section>
+        )}
 
         {/* Agent drill-down */}
         {ad ? (

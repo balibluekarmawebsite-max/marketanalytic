@@ -27,7 +27,7 @@ model Property {
   code            String  @id // BKDS, BKDU, BKV
   name            String
   city            String?
-  roomsAvailable  Int? // BKDU = 38. BKDS/BKV unknown — fill before occupancy math.
+  roomsAvailable  Int? // physical room count: BKDS 18, BKDU 20, BKV 15 (see room-inventory.ts).
   currency        String  @default("IDR")
 
   reservations    Reservation[]
