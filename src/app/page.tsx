@@ -178,6 +178,7 @@ export default async function Home() {
           </p>
           <nav className="mt-1 flex flex-wrap gap-2 text-sm">
             <Link href="/compare" className="rounded-md border px-2.5 py-1 font-medium hover:bg-accent">Compare properties →</Link>
+            <Link href="/pace" className="rounded-md border px-2.5 py-1 font-medium hover:bg-accent">Pickup &amp; pace →</Link>
             <Link href="/budget" className="rounded-md border px-2.5 py-1 font-medium hover:bg-accent">Budget vs actual →</Link>
           </nav>
         </div>
@@ -258,6 +259,9 @@ export default async function Home() {
                             ))}
                           </tbody>
                         </table>
+                        <Link href={`/pace?p=${p.code}`} className={`mt-3 inline-flex items-center gap-1 text-xs font-medium ${ACCENT[p.code]?.text ?? "text-primary"} hover:underline`}>
+                          Booking curve &amp; pickup →
+                        </Link>
                       </CardContent>
                     </Card>
                   ))}

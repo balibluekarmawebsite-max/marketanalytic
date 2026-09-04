@@ -306,6 +306,133 @@ export async function getPropertyComparison(period: string): Promise<PropertyCom
   return { period, periodLabel, monthsAll, rows };
 }
 
+// ---------------------------------------------------------------------------
+// Pickup / pace detail — the forward booking view for one property
+// ---------------------------------------------------------------------------
+
+export type PickupMonthRow = {
+  month: string; // YYYY-MM
+  otbNow: number | null; // on-the-books occupancy now
+  otb7: number | null;
+  otb30: number | null;
+  pickup7: number | null; // otbNow − otb7 (occupancy points gained in 7 days)
+  pickup30: number | null;
+  stly: number | null; // same-lead-time last year
+  paceDelta: number | null; // otbNow − stly
+};
+export type CurvePoint = { lead: number; otb: number }; // lead = days before the 1st (0 = month start, negative = into the month)
+export type PickupDetail = {
+  code: string;
+  name: string;
+  asOf: string | null;
+  months: PickupMonthRow[];
+  curveMonth: string | null;
+  curveThisYear: CurvePoint[];
+  curveLastYear: CurvePoint[];
+  availableCurveMonths: string[];
+};
+
+const DAY = 86400000;
+
+/**
+ * Deep pickup/pace view for one property: on-the-books occupancy for each
+ * upcoming month, how much was picked up in the last 7/30 days, pace vs the
+ * same lead time last year, and the booking-build-up curve (this year vs last)
+ * for a chosen target month.
+ */
+export async function getPickupDetail(code: string, curveMonthArg?: string): Promise<PickupDetail | null> {
+  const [prop, snaps] = await Promise.all([
+    prisma.property.findUnique({ where: { code } }),
+    prisma.pickupSnapshot.findMany({ where: { propertyCode: code } }),
+  ]);
+  if (!prop) return null;
+
+  const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  const ym = (ms: number) => new Date(ms).toISOString().slice(0, 7);
+  const monthStart = (y: number, m0: number) => Date.UTC(y, m0, 1);
+  const monthStartOf = (m: string) => monthStart(+m.slice(0, 4), +m.slice(5, 7) - 1);
+  const monthEndOf = (m: string) => monthStart(+m.slice(0, 4), +m.slice(5, 7)) - DAY; // last day of month
+  const shiftYear = (m: string, dy: number) => `${+m.slice(0, 4) + dy}-${m.slice(5, 7)}`;
+
+  if (snaps.length === 0) {
+    return { code: prop.code, name: prop.name, asOf: null, months: [], curveMonth: null, curveThisYear: [], curveLastYear: [], availableCurveMonths: [] };
+  }
+
+  // Index every snapshot by its target month → sorted [{snap ms, otb}].
+  const byTarget = new Map<string, { snap: number; otb: number }[]>();
+  let latest = 0;
+  for (const s of snaps) {
+    const snap = new Date(s.snapshotDate).getTime();
+    const tgt = ym(new Date(s.targetMonth).getTime());
+    if (snap > latest) latest = snap;
+    (byTarget.get(tgt) ?? byTarget.set(tgt, []).get(tgt)!).push({ snap, otb: num(s.otbOccupancy) });
+  }
+  for (const arr of Array.from(byTarget.values())) arr.sort((a, b) => a.snap - b.snap);
+
+  // OTB for a target month as known on/at-or-before a given snapshot time.
+  const otbBefore = (month: string, cutoff: number): number | null => {
+    const arr = byTarget.get(month);
+    if (!arr) return null;
+    let val: number | null = null;
+    for (const p of arr) { if (p.snap <= cutoff) val = p.otb; else break; }
+    return val;
+  };
+
+  const latestMonth = ym(latest);
+  // Upcoming target months = those with a value at the latest snapshot, from the
+  // current month forward.
+  const upcoming = Array.from(byTarget.keys())
+    .filter((m) => m >= latestMonth && otbBefore(m, latest) != null)
+    .sort();
+
+  const months: PickupMonthRow[] = upcoming.map((m) => {
+    const otbNow = otbBefore(m, latest);
+    const otb7 = otbBefore(m, latest - 7 * DAY);
+    const otb30 = otbBefore(m, latest - 30 * DAY);
+    const lead = Math.round((monthStartOf(m) - latest) / DAY); // days from now to month start
+    const ly = shiftYear(m, -1);
+    const stly = otbBefore(ly, monthStartOf(ly) - lead * DAY); // last year at the same lead time
+    return {
+      month: m,
+      otbNow, otb7, otb30,
+      pickup7: otbNow != null && otb7 != null ? otbNow - otb7 : null,
+      pickup30: otbNow != null && otb30 != null ? otbNow - otb30 : null,
+      stly,
+      paceDelta: otbNow != null && stly != null ? otbNow - stly : null,
+    };
+  });
+
+  // Booking curve for a chosen month (default: first upcoming). Build-up over the
+  // ~150 days before the 1st, capped at month end so the post-month reset can't
+  // pollute it. Last year uses the same-month-last-year curve aligned by lead.
+  const availableCurveMonths = upcoming.filter((m) => byTarget.has(shiftYear(m, -1)));
+  const curveMonth = curveMonthArg && upcoming.includes(curveMonthArg) ? curveMonthArg : upcoming[0] ?? null;
+
+  const curveFor = (month: string | null): CurvePoint[] => {
+    if (!month) return [];
+    const arr = byTarget.get(month);
+    if (!arr) return [];
+    const start = monthStartOf(month);
+    const end = Math.min(monthEndOf(month) + DAY, latest + DAY);
+    return arr
+      .filter((p) => p.snap <= end)
+      .map((p) => ({ lead: Math.round((start - p.snap) / DAY), otb: p.otb }))
+      .filter((pt) => pt.lead <= 150 && pt.lead >= -31)
+      .sort((a, b) => b.lead - a.lead);
+  };
+
+  return {
+    code: prop.code,
+    name: prop.name,
+    asOf: iso(latest),
+    months,
+    curveMonth,
+    curveThisYear: curveFor(curveMonth),
+    curveLastYear: curveFor(curveMonth ? shiftYear(curveMonth, -1) : null),
+    availableCurveMonths,
+  };
+}
+
 /** Aggregate DailyStat into per-property, per-month performance. */
 export async function getOverview(): Promise<Overview> {
   const [rows, props] = await Promise.all([
