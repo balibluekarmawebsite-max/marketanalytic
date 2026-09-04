@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
-import { getBudgetVsActual, getBudgetVsActualMonthly, type MonthBvA } from "@/lib/analytics";
+import { getBudgetVsActual, getBudgetVsActualMonthly, getBusinessOverview, type MonthBvA, type YoyMonth } from "@/lib/analytics";
 import { ExportButtons } from "@/components/export-buttons";
 import { formatIDRFull, formatInt, formatPct2, monthShort } from "@/lib/utils";
 
@@ -37,11 +37,17 @@ const occ = (v: number | null) => (v == null ? "—" : formatPct2(v));
 const idr = (v: number | null) => (v == null ? "—" : formatIDRFull(v));
 const int = (v: number | null) => (v == null ? "—" : formatInt(v));
 
+// Year-over-year deltas.
+const deltaPts = (a: number | null, b: number | null) => (a != null && b != null ? a - b : null);
+const growthPct = (a: number | null, b: number | null) => (a != null && b != null && b !== 0 ? ((a - b) / b) * 100 : null);
+const yoyTone = (v: number | null) => (v == null ? "text-muted-foreground" : v >= 0 ? "text-emerald-600" : "text-red-600");
+const signed = (v: number | null, digits = 1, suffix = "") => (v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(digits)}${suffix}`);
+
 export default async function BudgetPage({ searchParams }: { searchParams: { p?: string; period?: string } }) {
   const code = (searchParams.p ?? "BKDS").toUpperCase();
   if (!VALID.includes(code)) notFound();
   const period = searchParams.period ?? "2026";
-  const [m, seg] = await Promise.all([getBudgetVsActualMonthly(code, period), getBudgetVsActual(code, period)]);
+  const [m, seg, bo] = await Promise.all([getBudgetVsActualMonthly(code, period), getBudgetVsActual(code, period), getBusinessOverview(code)]);
   if (!m) notFound();
 
   const accent = ACCENT[code] ?? { text: "text-primary", bar: "bg-primary" };
@@ -165,6 +171,76 @@ export default async function BudgetPage({ searchParams }: { searchParams: { p?:
                 </CardContent>
               </Card>
             </section>
+
+            {/* Business overview — pure actuals, 2026 vs 2025 */}
+            {bo && bo.months.length > 0 && (() => {
+              const bt = bo.totals;
+              return (
+                <section className="space-y-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h2 className="text-lg font-semibold">Business overview <span className="text-sm font-normal text-muted-foreground">· actual 2026 vs 2025</span></h2>
+                    <span className="text-xs text-muted-foreground">occupancy · ADR · revenue, actuals only</span>
+                  </div>
+                  <Card>
+                    <CardContent className="overflow-x-auto pt-6">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                            <th rowSpan={2} className="py-1 pr-3 text-left align-bottom font-medium">Month</th>
+                            <th colSpan={3} className="px-2 py-1 text-center font-medium">Occupancy</th>
+                            <th colSpan={3} className="px-2 py-1 text-center font-medium">ADR</th>
+                            <th colSpan={3} className="px-2 py-1 text-center font-medium">Revenue (net)</th>
+                          </tr>
+                          <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                            {["2026", "2025", "Δ", "2026", "2025", "Δ", "2026", "2025", "Δ"].map((h, i) => (
+                              <th key={i} className={`px-2 py-1 text-right font-medium ${[2, 5, 8].includes(i) ? "pr-3" : ""}`}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bo.months.map((r: YoyMonth) => {
+                            const oD = deltaPts(r.occ2026, r.occ2025), aD = growthPct(r.adr2026, r.adr2025), rD = growthPct(r.rev2026, r.rev2025);
+                            const mkey = `2026-${String(r.month).padStart(2, "0")}`;
+                            return (
+                              <tr key={r.month} className="border-t border-border/40">
+                                <td className="py-1.5 pr-3 font-medium">{monthShort(mkey)}</td>
+                                <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums font-medium">{occ(r.occ2026)}</td>
+                                <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-muted-foreground">{occ(r.occ2025)}</td>
+                                <td className={`whitespace-nowrap px-2 py-1.5 pr-3 text-right tabular-nums ${yoyTone(oD)}`}>{signed(oD, 1, " pt")}</td>
+                                <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums font-medium">{idr(r.adr2026)}</td>
+                                <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-muted-foreground">{idr(r.adr2025)}</td>
+                                <td className={`whitespace-nowrap px-2 py-1.5 pr-3 text-right tabular-nums ${yoyTone(aD)}`}>{signed(aD, 1, "%")}</td>
+                                <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums font-medium">{idr(r.rev2026)}</td>
+                                <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-muted-foreground">{idr(r.rev2025)}</td>
+                                <td className={`whitespace-nowrap px-2 py-1.5 text-right tabular-nums ${yoyTone(rD)}`}>{signed(rD, 1, "%")}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t-2 border-border font-semibold">
+                            <td className="py-2 pr-3">Total</td>
+                            <td className="px-2 py-2 text-right tabular-nums">{occ(bt.occ2026)}</td>
+                            <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">{occ(bt.occ2025)}</td>
+                            <td className={`px-2 py-2 pr-3 text-right tabular-nums ${yoyTone(deltaPts(bt.occ2026, bt.occ2025))}`}>{signed(deltaPts(bt.occ2026, bt.occ2025), 1, " pt")}</td>
+                            <td className="px-2 py-2" colSpan={2} />
+                            <td className="px-2 py-2 pr-3" />
+                            <td className="px-2 py-2 text-right tabular-nums">{idr(bt.rev2026)}</td>
+                            <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">{idr(bt.rev2025)}</td>
+                            <td className={`px-2 py-2 text-right tabular-nums ${yoyTone(growthPct(bt.rev2026, bt.rev2025))}`}>{signed(growthPct(bt.rev2026, bt.rev2025), 1, "%")}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </CardContent>
+                  </Card>
+                  <p className="text-xs text-muted-foreground">
+                    Actual occupancy, ADR and net revenue for each month, this year against last — both from the PU sheets (2025
+                    from the prior-year sheets). Δ is percentage points for occupancy, year-over-year growth for ADR and revenue
+                    (green = up on last year). Totals cover the months present in both years.
+                  </p>
+                </section>
+              );
+            })()}
 
             {/* Secondary: channel / segment mix (rooms) from the market-segment plan */}
             {seg && seg.segments.length > 0 && (

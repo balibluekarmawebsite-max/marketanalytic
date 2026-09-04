@@ -517,6 +517,66 @@ export async function getBudgetVsActualMonthly(code: string, period: string): Pr
   };
 }
 
+export type YoyMonth = {
+  month: number; // 1..12
+  occ2026: number | null; occ2025: number | null;
+  adr2026: number | null; adr2025: number | null;
+  rev2026: number | null; rev2025: number | null;
+  rooms2026: number | null; rooms2025: number | null;
+};
+export type BusinessOverview = {
+  code: string; name: string;
+  months: YoyMonth[];
+  totals: { rev2026: number; rev2025: number; rooms2026: number; rooms2025: number; occ2026: number | null; occ2025: number | null };
+};
+
+/** Actual occupancy / ADR / revenue per month, 2026 vs 2025 (from MonthlyStat).
+ * A pure business-overview view — actuals only, no budget. */
+export async function getBusinessOverview(code: string): Promise<BusinessOverview | null> {
+  const [prop, rows] = await Promise.all([
+    prisma.property.findUnique({ where: { code } }),
+    prisma.monthlyStat.findMany({ where: { propertyCode: code }, orderBy: { month: "asc" } }),
+  ]);
+  if (!prop) return null;
+
+  const byKey = new Map<string, (typeof rows)[number]>(); // "YYYY-M"
+  for (const r of rows) {
+    const d = new Date(r.month);
+    byKey.set(`${d.getUTCFullYear()}-${d.getUTCMonth() + 1}`, r);
+  }
+  const val = (year: number, mo: number, f: (r: (typeof rows)[number]) => unknown): number | null => {
+    const r = byKey.get(`${year}-${mo}`);
+    const v = r ? f(r) : null;
+    return v == null ? null : num(v as number);
+  };
+
+  const months: YoyMonth[] = [];
+  for (let mo = 1; mo <= 12; mo++) {
+    const row: YoyMonth = {
+      month: mo,
+      occ2026: val(2026, mo, (r) => r.actualOcc), occ2025: val(2025, mo, (r) => r.actualOcc),
+      adr2026: val(2026, mo, (r) => r.actualAdr), adr2025: val(2025, mo, (r) => r.actualAdr),
+      rev2026: val(2026, mo, (r) => r.actualRevenue), rev2025: val(2025, mo, (r) => r.actualRevenue),
+      rooms2026: val(2026, mo, (r) => r.actualRooms), rooms2025: val(2025, mo, (r) => r.actualRooms),
+    };
+    if (row.occ2026 != null || row.occ2025 != null) months.push(row);
+  }
+
+  // Totals over months present in BOTH years (fair comparison).
+  const both = months.filter((m) => m.rev2026 != null && m.rev2025 != null);
+  const sum = (f: (m: YoyMonth) => number | null) => both.reduce((s, m) => s + (f(m) ?? 0), 0);
+  const occB26 = both.filter((m) => m.occ2026 != null), occB25 = both.filter((m) => m.occ2025 != null);
+  return {
+    code: prop.code, name: prop.name, months,
+    totals: {
+      rev2026: sum((m) => m.rev2026), rev2025: sum((m) => m.rev2025),
+      rooms2026: sum((m) => m.rooms2026), rooms2025: sum((m) => m.rooms2025),
+      occ2026: occB26.length ? occB26.reduce((s, m) => s + (m.occ2026 ?? 0), 0) / occB26.length : null,
+      occ2025: occB25.length ? occB25.reduce((s, m) => s + (m.occ2025 ?? 0), 0) / occB25.length : null,
+    },
+  };
+}
+
 export type OtbMonth = { month: string; otbOcc: number | null; otbAdr: number | null; otbRevenue: number | null; otbRooms: number | null };
 export type PropertyOtb = { code: string; name: string; months: OtbMonth[] };
 

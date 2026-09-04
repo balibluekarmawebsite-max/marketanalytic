@@ -61,16 +61,19 @@ function main() {
   if (!["BKDS", "BKDU", "BKV"].includes(property)) throw new Error(`Could not determine property from "${file}". Pass it explicitly.`);
 
   const wb = XLSX.readFile(file, { cellDates: false });
-  // PU sheets for 2026 (this year), keyed by their own month.
+  // PU sheets, keyed by own month, split by year (2026 = current, 2025 = prior).
   const puSheets: { month: number; name: string }[] = [];
+  const pu2025: { month: number; name: string }[] = [];
   for (const n of wb.SheetNames) {
     const low = n.toLowerCase();
-    if (low.includes("pu") && low.includes("2026") && !low.includes("2025")) {
-      const mo = monthOf(low.split("pu")[0]) ?? monthOf(low.replace(/2026|pu/g, " "));
-      if (mo) puSheets.push({ month: mo, name: n });
-    }
+    if (!low.includes("pu")) continue;
+    const mo = monthOf(low.split("pu")[0]) ?? monthOf(low.replace(/20\d\d|pu/g, " "));
+    if (!mo) continue;
+    if (low.includes("2026")) puSheets.push({ month: mo, name: n });
+    else if (low.includes("2025")) pu2025.push({ month: mo, name: n });
   }
   puSheets.sort((a, b) => a.month - b.month);
+  pu2025.sort((a, b) => a.month - b.month);
   if (puSheets.length === 0) throw new Error("No 'PU 2026' sheets found.");
   const latest = puSheets[puSheets.length - 1];
   const year = 2026;
@@ -129,18 +132,34 @@ function main() {
   const ls = parseSheet(latest.name);
   for (let mo = latest.month; mo <= 12; mo++) get(mo).otb = actualFor(ls, mo);
 
+  const src = `monthly:${file.split("/").pop()}`;
   const rows = Array.from(data.entries()).map(([mo, d]) => ({
     propertyCode: property,
     month: new Date(Date.UTC(year, mo - 1, 1)),
     actualOcc: d.actual.occ, actualRooms: d.actual.rooms, actualAdr: d.actual.adr, actualRevenue: d.actual.rev,
     budgetOcc: d.budget.occ, budgetRooms: d.budget.rooms, budgetAdr: d.budget.adr, budgetRevenue: d.budget.rev,
     otbOcc: d.otb.occ, otbRooms: d.otb.rooms, otbAdr: d.otb.adr, otbRevenue: d.otb.rev,
-    sourceFileId: `monthly:${file.split("/").pop()}`,
+    sourceFileId: src,
   }));
 
+  // Prior-year (2025) actuals — from the "<Month> PU 2025" sheets. Actual only;
+  // no budget/OTB. Powers the year-over-year business overview.
+  const rows2025 = pu2025.map(({ month, name }) => {
+    const a = actualFor(parseSheet(name), month);
+    return {
+      propertyCode: property,
+      month: new Date(Date.UTC(2025, month - 1, 1)),
+      actualOcc: a.occ, actualRooms: a.rooms, actualAdr: a.adr, actualRevenue: a.rev,
+      budgetOcc: null, budgetRooms: null, budgetAdr: null, budgetRevenue: null,
+      otbOcc: null, otbRooms: null, otbAdr: null, otbRevenue: null,
+      sourceFileId: src,
+    };
+  });
+  const allRows = [...rows2025, ...rows];
+
   return prisma.monthlyStat.deleteMany({ where: { propertyCode: property } })
-    .then(() => prisma.monthlyStat.createMany({ data: rows, skipDuplicates: true }))
-    .then(() => console.log(`  ✓ ${property}: ${rows.length} monthly rows (latest PU: ${latest.name.trim()}) — actual, budget & on-the-books`));
+    .then(() => prisma.monthlyStat.createMany({ data: allRows, skipDuplicates: true }))
+    .then(() => console.log(`  ✓ ${property}: ${rows.length} × 2026 + ${rows2025.length} × 2025 monthly rows (latest PU: ${latest.name.trim()})`));
 }
 
 Promise.resolve().then(main).catch((e) => { console.error(e); process.exit(1); }).finally(() => prisma.$disconnect());

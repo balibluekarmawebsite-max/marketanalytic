@@ -1,4 +1,4 @@
-import { getOverview, getPropertyComparison, getBudgetVsActualMonthly, getPickupDetail } from "@/lib/analytics";
+import { getOverview, getPropertyComparison, getBudgetVsActualMonthly, getBusinessOverview, getPickupDetail } from "@/lib/analytics";
 import { getPropertyAnalytics, type Dim } from "@/lib/property-analytics";
 import { countryName } from "@/lib/countries";
 
@@ -57,6 +57,21 @@ async function budgetSheet(code: string, period: string): Promise<Sheet> {
   return { name: `Budget ${code}`, aoa };
 }
 
+async function businessOverviewSheet(code: string): Promise<Sheet> {
+  const bo = await getBusinessOverview(code);
+  const aoa: Cell[][] = [["Month", "Occ 2026 %", "Occ 2025 %", "ADR 2026", "ADR 2025", "Revenue 2026", "Revenue 2025"]];
+  if (bo) {
+    for (const r of bo.months) {
+      aoa.push([
+        `2026-${String(r.month).padStart(2, "0")}`, r2(r.occ2026), r2(r.occ2025),
+        r.adr2026 == null ? null : Math.round(r.adr2026), r.adr2025 == null ? null : Math.round(r.adr2025),
+        r.rev2026 == null ? null : Math.round(r.rev2026), r.rev2025 == null ? null : Math.round(r.rev2025),
+      ]);
+    }
+  }
+  return { name: `Overview ${code}`, aoa };
+}
+
 async function paceSheet(code: string): Promise<Sheet> {
   const d = await getPickupDetail(code);
   const aoa: Cell[][] = [["Month", "On the books %", "Pickup 7d (pts)", "Pickup 30d (pts)", "Last year %", "Pace (pts)"]];
@@ -94,7 +109,7 @@ export async function buildExport(dataset: string, params: { p?: string; period?
       return { filename: `blue-karma-comparison-${period}-${stamp()}`, sheets: [await comparisonSheet(period)] };
     case "budget":
       if (!valid) return null;
-      return { filename: `blue-karma-${code}-budget-${period}-${stamp()}`, sheets: [await budgetSheet(code, period)] };
+      return { filename: `blue-karma-${code}-budget-${period}-${stamp()}`, sheets: [await budgetSheet(code, period), await businessOverviewSheet(code)] };
     case "pace":
       if (!valid) return null;
       return { filename: `blue-karma-${code}-pace-${stamp()}`, sheets: [await paceSheet(code)] };
