@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { monthShort } from "@/lib/utils";
 import { normalizeSegment } from "@/lib/ingest/segment";
 import { ROOM_INVENTORY, daysInMonthYM } from "@/lib/room-inventory";
+import { resolvePeriod } from "@/lib/period";
 
 export type MonthAgg = {
   month: string; // "YYYY-MM"
@@ -739,11 +740,8 @@ export async function getRoomCategoryOccupancy(code: string, period: string): Pr
   if (!inv || !prop) return null;
 
   const ym = (d: Date) => new Date(d).toISOString().slice(0, 7);
-  let inPeriod: (m: string) => boolean;
-  let periodLabel: string;
-  if (/^\d{4}-\d{2}$/.test(period)) { inPeriod = (m) => m === period; periodLabel = `${monthShort(period)} ${period.slice(0, 4)}`; }
-  else if (period === "all") { inPeriod = () => true; periodLabel = "All time"; }
-  else { inPeriod = (m) => m.startsWith(period); periodLabel = `${period} YTD`; }
+  const monthsAll = Array.from(new Set(facts.map((f) => ym(f.month)))).sort();
+  const { inPeriod, label: periodLabel } = resolvePeriod(period, monthsAll);
 
   // Every reservation label that maps to a group. A KNOWN label that is not in
   // this set ("orphan" — e.g. a new/renamed OTA label a future import introduces)
@@ -821,64 +819,53 @@ export type KpiDeltas = {
 export async function getKpiDeltas(period: string, code?: string): Promise<KpiDeltas> {
   const empty = (): KpiSeries => ({ cur: null, prev: null, series: [] });
   const none: KpiDeltas = { priorLabel: null, bookings: empty(), roomNights: empty(), revenue: empty(), adr: empty() };
+  if (period === "all") return none; // no single prior period to compare against
 
-  const isYear = /^\d{4}$/.test(period);
-  const isMonth = /^\d{4}-\d{2}$/.test(period);
-  if (!isYear && !isMonth) return none; // "all" has no single prior period
-
-  const curYear = parseInt(period.slice(0, 4), 10);
-  const prevYear = curYear - 1;
   const codes = code ? [code] : ["BKDS", "BKDU", "BKV"];
-
   const [ms, facts] = await Promise.all([
     prisma.monthlyStat.findMany({ where: { propertyCode: { in: codes } } }),
     prisma.reservationFact.findMany({ where: { propertyCode: { in: codes } } }),
   ]);
 
-  const partsOf = (d: Date) => { const x = new Date(d); return { y: x.getUTCFullYear(), mn: String(x.getUTCMonth() + 1).padStart(2, "0") }; };
-  const add = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) || 0) + v);
+  const ym = (d: Date) => new Date(d).toISOString().slice(0, 7); // "YYYY-MM"
+  const priorYm = (m: string) => `${parseInt(m.slice(0, 4), 10) - 1}${m.slice(4)}`; // same month, year − 1
+  const add = (map: Map<string, number>, k: string, v: number) => map.set(k, (map.get(k) || 0) + v);
   const msRev = new Map<string, number>(), msRooms = new Map<string, number>();
   const arrBk = new Map<string, number>();
   for (const r of ms) {
-    const { y, mn } = partsOf(r.month); const k = `${y}|${mn}`;
+    const k = ym(r.month);
     if (r.actualRevenue != null) add(msRev, k, num(r.actualRevenue));
     if (r.actualRooms != null) add(msRooms, k, r.actualRooms);
   }
-  for (const f of facts) { const { y, mn } = partsOf(f.month); add(arrBk, `${y}|${mn}`, f.reservations); }
+  for (const f of facts) add(arrBk, ym(f.month), f.reservations);
 
-  const monthFilter = (mn: string) => !isMonth || mn === period.slice(5, 7);
+  // Resolve the period against the ARRIVAL months (the same universe the picker
+  // and the headline KPIs use), so "last 3 months" means the same span here as on
+  // the cards — not the future OTB-only months that MonthlyStat also carries.
+  const universe = new Set(facts.map((f) => ym(f.month)));
+  const { months: periodMonths } = resolvePeriod(period, Array.from(universe));
 
-  // Sum a metric over the months shared by both years (fair YoY); the series is
-  // the current year's own monthly values — each metric derives its months from
-  // its own data, so a metric that ends earlier doesn't get trailing zeros.
+  // Series is the metric's own months within the period; the delta sums over the
+  // period months that also have the prior-year month, so YoY is apples-to-apples.
   // `den` makes it a ratio (ADR = rev ÷ rooms).
   const build = (map: Map<string, number>, den?: Map<string, number>): KpiSeries => {
-    const curMonths = Array.from(map.keys())
-      .filter((k) => k.startsWith(`${curYear}|`))
-      .map((k) => k.slice(k.indexOf("|") + 1))
-      .filter(monthFilter)
-      .sort();
-    const series = curMonths.map((mn) => {
-      const n = map.get(`${curYear}|${mn}`) ?? 0;
-      if (!den) return n;
-      const d = den.get(`${curYear}|${mn}`) ?? 0;
-      return d > 0 ? n / d : 0;
-    });
-    const common = curMonths.filter((mn) => map.has(`${prevYear}|${mn}`));
+    const myMonths = periodMonths.filter((m) => map.has(m));
+    const series = myMonths.map((m) => (den ? ((den.get(m) ?? 0) > 0 ? (map.get(m) ?? 0) / (den.get(m) ?? 1) : 0) : (map.get(m) ?? 0)));
+    const common = myMonths.filter((m) => map.has(priorYm(m)));
     if (!common.length) return { cur: null, prev: null, series };
-    const sum = (yr: number, m: Map<string, number>) => common.reduce((s, mn) => s + (m.get(`${yr}|${mn}`) ?? 0), 0);
+    const sum = (m: Map<string, number>, shift: boolean) => common.reduce((s, mo) => s + (m.get(shift ? priorYm(mo) : mo) ?? 0), 0);
     if (den) {
-      const cd = sum(curYear, den), pd = sum(prevYear, den);
-      return { cur: cd > 0 ? sum(curYear, map) / cd : null, prev: pd > 0 ? sum(prevYear, map) / pd : null, series };
+      const cd = sum(den, false), pd = sum(den, true);
+      return { cur: cd > 0 ? sum(map, false) / cd : null, prev: pd > 0 ? sum(map, true) / pd : null, series };
     }
-    return { cur: sum(curYear, map), prev: sum(prevYear, map), series };
+    return { cur: sum(map, false), prev: sum(map, true), series };
   };
 
-  return {
-    priorLabel: isMonth ? `vs ${monthShort(period)} ${prevYear}` : `vs ${prevYear}`,
-    bookings: build(arrBk),
-    roomNights: build(msRooms),
-    revenue: build(msRev),
-    adr: build(msRev, msRooms),
-  };
+  const priorLabel = /^\d{4}-\d{2}$/.test(period)
+    ? `vs ${monthShort(period)} ${parseInt(period.slice(0, 4), 10) - 1}`
+    : /^\d{4}$/.test(period)
+      ? `vs ${parseInt(period, 10) - 1}`
+      : "vs last year";
+
+  return { priorLabel, bookings: build(arrBk), roomNights: build(msRooms), revenue: build(msRev), adr: build(msRev, msRooms) };
 }

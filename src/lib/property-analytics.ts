@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { normalizeSegment } from "@/lib/ingest/segment";
+import { resolvePeriod } from "@/lib/period";
 
 const num = (d: unknown): number =>
   d == null ? 0 : typeof d === "number" ? d : Number((d as { toString(): string }).toString());
@@ -121,11 +122,7 @@ export async function getPropertyAnalytics(
   };
 
   const monthsAll = Array.from(new Set(facts.map((f) => ym(f.month)))).sort();
-  let inPeriod: (m: string) => boolean;
-  let periodLabel: string;
-  if (/^\d{4}-\d{2}$/.test(period)) { inPeriod = (m) => m === period; periodLabel = period; }
-  else if (period === "all") { inPeriod = () => true; periodLabel = "All time"; }
-  else { inPeriod = (m) => m.startsWith(period); periodLabel = `${period} YTD`; }
+  const { inPeriod, label: periodLabel } = resolvePeriod(period, monthsAll);
 
   const rows: Fact[] = facts.filter((f) => inPeriod(ym(f.month)));
   const periodMonths = monthsAll.filter(inPeriod);

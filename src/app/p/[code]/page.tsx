@@ -8,6 +8,7 @@ import { getPropertyAnalytics, type Dim } from "@/lib/property-analytics";
 import { getRoomCategoryOccupancy, getKpiDeltas } from "@/lib/analytics";
 import { DeltaChip } from "@/components/ui/delta-chip";
 import { Sparkline } from "@/components/sparkline";
+import { PeriodPicker } from "@/components/period-picker";
 import { formatIDRFull, formatInt, formatPct2, monthShort } from "@/lib/utils";
 import { countryName as cname } from "@/lib/countries";
 
@@ -47,7 +48,6 @@ export default async function PropertyPage({
 
   const accent = ACCENT[code] ?? "text-primary";
   const bar = BAR[code] ?? "bg-primary";
-  const periods = [{ k: "2026", label: "2026 YTD" }, { k: "2025", label: "2025 YTD" }, { k: "all", label: "All time" }];
   const maxCell = Math.max(1, ...a.matrix.flatMap((m) => m.byMonth));
   const ctx = agent ? `&agent=${encodeURIComponent(agent)}` : seg ? `&seg=${encodeURIComponent(seg)}` : "";
   const segHref = (k: string) => `/p/${code}?period=${period}&seg=${encodeURIComponent(k)}`;
@@ -67,17 +67,7 @@ export default async function PropertyPage({
             {a.city && <Badge variant="secondary">{a.city}</Badge>}
             <span className="ml-auto text-xs text-muted-foreground">Guest analytics · {a.periodLabel}</span>
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {periods.map((p) => (
-              <Link key={p.k} href={`/p/${code}?period=${p.k}${ctx}`}
-                className={`rounded-md border px-2.5 py-1 text-xs ${period === p.k ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent"}`}>{p.label}</Link>
-            ))}
-            <span className="mx-1 w-px bg-border" />
-            {a.monthsAll.slice().reverse().map((m) => (
-              <Link key={m} href={`/p/${code}?period=${m}${ctx}`}
-                className={`rounded-md border px-2 py-1 text-xs tabular-nums ${period === m ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent"}`}>{monthShort(m)} {m.slice(2, 4)}</Link>
-            ))}
-          </div>
+          <PeriodPicker period={period} months={a.monthsAll} href={(p) => `/p/${code}?period=${p}${ctx}`} />
         </div>
       </header>
 
