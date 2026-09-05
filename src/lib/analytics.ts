@@ -869,3 +869,42 @@ export async function getKpiDeltas(period: string, code?: string): Promise<KpiDe
 
   return { priorLabel, bookings: build(arrBk), roomNights: build(msRooms), revenue: build(msRev), adr: build(msRev, msRooms) };
 }
+
+// ---------------------------------------------------------------------------
+// "What changed" — a short auto-generated briefing for the top of the dashboard.
+// ---------------------------------------------------------------------------
+// Rule-based (no LLM): picks the most notable signals from the same clean data
+// the cards use — group YoY revenue and its driver, and the biggest forward
+// booking-pace moves vs same-time-last-year — and phrases each in one line.
+export type BriefItem = { text: string; tone: "good" | "bad" | "neutral" };
+export type Briefing = { items: BriefItem[] };
+
+export async function getBriefing(): Promise<Briefing> {
+  const [g, pace] = await Promise.all([getKpiDeltas("2026"), getForwardLook()]);
+  const items: BriefItem[] = [];
+  const pct = (c: number | null, p: number | null) => (c != null && p != null && p !== 0 ? ((c - p) / Math.abs(p)) * 100 : null);
+  const mName = (ym: string) => ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][parseInt(ym.slice(5, 7), 10) - 1] ?? ym;
+
+  // 1) Group revenue YoY, and whether it's an ADR or a volume story.
+  const gRev = pct(g.revenue.cur, g.revenue.prev);
+  const gRooms = pct(g.roomNights.cur, g.roomNights.prev);
+  if (gRev != null) {
+    const dir = gRev >= 0 ? "up" : "down";
+    let driver = ".";
+    if (gRooms != null) {
+      if (Math.abs(gRooms) < Math.max(2, Math.abs(gRev) / 2)) driver = " — room nights are roughly flat, so it's an ADR story.";
+      else driver = ` on ${Math.abs(gRooms).toFixed(0)}% ${gRooms < 0 ? "fewer" : "more"} room nights.`;
+    }
+    items.push({ text: `Group room revenue is ${dir} ${Math.abs(gRev).toFixed(0)}% vs 2025${driver}`, tone: gRev >= 0 ? "good" : "bad" });
+  }
+
+  // 2) Strongest forward booking pace vs same time last year (momentum) and 3) the
+  // biggest laggard (watch) — only when the gap is meaningful (≥ 5 pts).
+  const movers = pace.flatMap((p) => p.months.filter((m) => m.delta != null).map((m) => ({ code: p.code, month: m.month, delta: m.delta as number, otb: m.otbNow })));
+  const up = movers.filter((m) => m.delta > 0).sort((a, b) => b.delta - a.delta)[0];
+  if (up && up.delta >= 5) items.push({ text: `${up.code} is pacing +${up.delta.toFixed(0)} pts ahead of last year for ${mName(up.month)}${up.otb != null ? ` (${up.otb.toFixed(0)}% on the books)` : ""}.`, tone: "good" });
+  const down = movers.filter((m) => m.delta < 0).sort((a, b) => a.delta - b.delta)[0];
+  if (down && down.delta <= -5) items.push({ text: `${down.code} ${mName(down.month)} is ${Math.abs(down.delta).toFixed(0)} pts behind last year${down.otb != null ? ` (${down.otb.toFixed(0)}% on the books)` : ""} — worth a look at rates.`, tone: "bad" });
+
+  return { items: items.slice(0, 3) };
+}

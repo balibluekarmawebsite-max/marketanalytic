@@ -7,7 +7,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getOverview, getForwardOtbAll, getKpiDeltas, type PropertyPerf, type PropertyOtb, type KpiSeries } from "@/lib/analytics";
+import { TrendingUp } from "lucide-react";
+import { getOverview, getForwardOtbAll, getKpiDeltas, getBriefing, type PropertyPerf, type PropertyOtb, type KpiSeries } from "@/lib/analytics";
 import { ExportButtons } from "@/components/export-buttons";
 import { DeltaChip } from "@/components/ui/delta-chip";
 import { Sparkline } from "@/components/sparkline";
@@ -173,6 +174,13 @@ export default async function Home() {
     /* YoY context optional */
   }
 
+  let briefing: Awaited<ReturnType<typeof getBriefing>> | null = null;
+  try {
+    briefing = await getBriefing();
+  } catch {
+    /* briefing optional */
+  }
+
   const updatedThrough = overview?.dataTo
     ? new Date(overview.dataTo).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
     : null;
@@ -226,6 +234,25 @@ export default async function Home() {
           </Card>
         ) : (
           <>
+            {briefing && briefing.items.length > 0 && (
+              <section className="rounded-xl border bg-primary/[0.03] p-4">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 rounded-md bg-primary/10 p-1.5 text-primary"><TrendingUp className="h-4 w-4" /></div>
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">What changed</div>
+                    <ul className="space-y-1 text-sm">
+                      {briefing.items.map((it, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${it.tone === "good" ? "bg-emerald-500" : it.tone === "bad" ? "bg-red-500" : "bg-muted-foreground/50"}`} />
+                          <span>{it.text}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </section>
+            )}
+
             <section className="space-y-3">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <h2 className="text-lg font-semibold">Group performance · 2026 YTD</h2>
