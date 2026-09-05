@@ -24,7 +24,20 @@ export function DimTable({
   title: string; firstCol: string; rows: DimRow[]; total: number; limit?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const pct = (part: number) => (total > 0 ? `${((part / total) * 100).toFixed(1)}%` : "—");
+  const share = (part: number) => (total > 0 ? (part / total) * 100 : 0);
+  const pct = (part: number) => (total > 0 ? `${share(part).toFixed(1)}%` : "—");
+  // Inline share bar in the % cell — the same visual language as the room-category
+  // table, so every ranked table reads the same way.
+  const PctCell = ({ part, muted = false }: { part: number; muted?: boolean }) => (
+    <td className="py-1.5 pl-2">
+      <div className="flex items-center justify-end gap-1.5">
+        <div className="hidden h-1.5 w-14 shrink-0 rounded-full bg-muted sm:block">
+          <div className={`h-full rounded-full ${muted ? "bg-muted-foreground/40" : "bg-primary/50"}`} style={{ width: `${Math.min(100, share(part))}%` }} />
+        </div>
+        <span className="w-11 text-right tabular-nums text-muted-foreground">{pct(part)}</span>
+      </div>
+    </td>
+  );
   const shown = expanded ? rows : rows.slice(0, limit);
   const rest = expanded ? [] : rows.slice(limit);
   const ra = rest.reduce((s, x) => ({ a: s.a + x.reservations, b: s.b + x.roomNights, c: s.c + x.revenue }), { a: 0, b: 0, c: 0 });
@@ -58,7 +71,7 @@ export function DimTable({
                   <td className={numTd}>{formatInt(row.reservations)}</td>
                   <td className={numTd}>{formatInt(row.roomNights)}</td>
                   <td className={numTd}>{row.revenue > 0 ? formatIDRFull(row.revenue) : "—"}</td>
-                  <td className="py-1.5 text-right tabular-nums text-muted-foreground">{pct(row.roomNights)}</td>
+                  <PctCell part={row.roomNights} />
                 </tr>
               ))}
               {rest.length > 0 && (
@@ -67,7 +80,7 @@ export function DimTable({
                   <td className={`${numTd} text-muted-foreground`}>{formatInt(ra.a)}</td>
                   <td className={`${numTd} text-muted-foreground`}>{formatInt(ra.b)}</td>
                   <td className={`${numTd} text-muted-foreground`}>{ra.c > 0 ? formatIDRFull(ra.c) : "—"}</td>
-                  <td className="py-1.5 text-right tabular-nums text-muted-foreground">{pct(ra.b)}</td>
+                  <PctCell part={ra.b} muted />
                 </tr>
               )}
               {expanded && rows.length > limit && (

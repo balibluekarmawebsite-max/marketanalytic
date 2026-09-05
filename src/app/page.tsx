@@ -7,8 +7,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getOverview, getForwardOtbAll, type PropertyPerf, type PropertyOtb } from "@/lib/analytics";
+import { getOverview, getForwardOtbAll, getKpiDeltas, type PropertyPerf, type PropertyOtb, type KpiSeries } from "@/lib/analytics";
 import { ExportButtons } from "@/components/export-buttons";
+import { DeltaChip } from "@/components/ui/delta-chip";
+import { Sparkline } from "@/components/sparkline";
 import { formatIDRFull, formatInt, formatNum0, formatPct2, monthShort } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -63,13 +65,19 @@ function Sparkbars({ data, color }: { data: number[]; color: string }) {
   );
 }
 
-function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Kpi({ label, value, sub, d, priorLabel }: { label: string; value: string; sub?: string; d?: KpiSeries; priorLabel?: string | null }) {
   return (
     <Card className="shadow-none">
       <CardContent className="p-4">
-        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+        <div className="flex items-start justify-between gap-2">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+          {d && <Sparkline data={d.series} className="mt-0.5 shrink-0 text-primary opacity-50" />}
+        </div>
         <div className="mt-1 text-xl font-semibold tabular-nums">{value}</div>
-        {sub && <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>}
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          {d && <DeltaChip current={d.cur} previous={d.prev} label={priorLabel ?? undefined} />}
+          {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
+        </div>
       </CardContent>
     </Card>
   );
@@ -158,6 +166,17 @@ export default async function Home() {
   }
   const hasForward = forward.some((p) => p.months.length > 0);
 
+  let kpi: Awaited<ReturnType<typeof getKpiDeltas>> | null = null;
+  try {
+    kpi = await getKpiDeltas("2026");
+  } catch {
+    /* YoY context optional */
+  }
+
+  const updatedThrough = overview?.dataTo
+    ? new Date(overview.dataTo).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+    : null;
+
   const hasData = overview && overview.rowCount > 0;
   const overallMonthly =
     overview?.monthLabels.map((m, i) => ({
@@ -173,6 +192,9 @@ export default async function Home() {
             <div className="h-8 w-8 rounded-md bg-primary" />
             <h1 className="text-xl font-semibold tracking-tight">Blue Karma · Market Analytics</h1>
             {hasData ? <Badge>Live data</Badge> : <Badge variant="secondary">Milestone 1</Badge>}
+            {hasData && updatedThrough && (
+              <span className="text-xs text-muted-foreground">· data through {updatedThrough}</span>
+            )}
           </div>
           <p className="text-sm text-muted-foreground">
             Revenue-management dashboard for Blue Karma Dijiwa Group — Seminyak, Ubud &amp; Village.
@@ -215,9 +237,9 @@ export default async function Home() {
                 </div>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <Kpi label="Room revenue YTD" value={formatIDRFull(overview!.ytdRevenue)} sub="3 properties" />
-                <Kpi label="Room nights YTD" value={formatInt(overview!.ytdRoomNights)} />
-                <Kpi label="Blended ADR" value={formatIDRFull(overview!.ytdAdr)} sub="revenue ÷ room nights" />
+                <Kpi label="Room revenue YTD" value={formatIDRFull(overview!.ytdRevenue)} sub="3 properties" d={kpi?.revenue} priorLabel={kpi?.priorLabel} />
+                <Kpi label="Room nights YTD" value={formatInt(overview!.ytdRoomNights)} d={kpi?.roomNights} priorLabel={kpi?.priorLabel} />
+                <Kpi label="Blended ADR" value={formatIDRFull(overview!.ytdAdr)} sub="revenue ÷ room nights" d={kpi?.adr} priorLabel={kpi?.priorLabel} />
                 <Kpi label="Properties" value="3" sub="BKDS · BKDU · BKV" />
               </div>
             </section>

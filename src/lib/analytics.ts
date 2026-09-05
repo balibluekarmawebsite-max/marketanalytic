@@ -801,3 +801,84 @@ export async function getRoomCategoryOccupancy(code: string, period: string): Pr
     groups, hasData: cleanMonths.length > 0,
   };
 }
+
+// ---------------------------------------------------------------------------
+// KPI deltas — clean year-over-year context for the headline cards.
+// ---------------------------------------------------------------------------
+// The daily-revenue feed is 2026-only, so YoY can't come from it. These deltas
+// use the same-basis MonthlyStat (PU-sheet) figures — revenue, rooms, ADR — which
+// carry 2024/2025/2026 actuals, plus the arrival list for the booking count.
+// Compared over the months present in BOTH years so it's apples-to-apples.
+export type KpiSeries = { cur: number | null; prev: number | null; series: number[] };
+export type KpiDeltas = {
+  priorLabel: string | null; // "vs 2025" / "vs Jul 2025" / null for "all"
+  bookings: KpiSeries;
+  roomNights: KpiSeries;
+  revenue: KpiSeries;
+  adr: KpiSeries;
+};
+
+export async function getKpiDeltas(period: string, code?: string): Promise<KpiDeltas> {
+  const empty = (): KpiSeries => ({ cur: null, prev: null, series: [] });
+  const none: KpiDeltas = { priorLabel: null, bookings: empty(), roomNights: empty(), revenue: empty(), adr: empty() };
+
+  const isYear = /^\d{4}$/.test(period);
+  const isMonth = /^\d{4}-\d{2}$/.test(period);
+  if (!isYear && !isMonth) return none; // "all" has no single prior period
+
+  const curYear = parseInt(period.slice(0, 4), 10);
+  const prevYear = curYear - 1;
+  const codes = code ? [code] : ["BKDS", "BKDU", "BKV"];
+
+  const [ms, facts] = await Promise.all([
+    prisma.monthlyStat.findMany({ where: { propertyCode: { in: codes } } }),
+    prisma.reservationFact.findMany({ where: { propertyCode: { in: codes } } }),
+  ]);
+
+  const partsOf = (d: Date) => { const x = new Date(d); return { y: x.getUTCFullYear(), mn: String(x.getUTCMonth() + 1).padStart(2, "0") }; };
+  const add = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) || 0) + v);
+  const msRev = new Map<string, number>(), msRooms = new Map<string, number>();
+  const arrBk = new Map<string, number>();
+  for (const r of ms) {
+    const { y, mn } = partsOf(r.month); const k = `${y}|${mn}`;
+    if (r.actualRevenue != null) add(msRev, k, num(r.actualRevenue));
+    if (r.actualRooms != null) add(msRooms, k, r.actualRooms);
+  }
+  for (const f of facts) { const { y, mn } = partsOf(f.month); add(arrBk, `${y}|${mn}`, f.reservations); }
+
+  const monthFilter = (mn: string) => !isMonth || mn === period.slice(5, 7);
+
+  // Sum a metric over the months shared by both years (fair YoY); the series is
+  // the current year's own monthly values — each metric derives its months from
+  // its own data, so a metric that ends earlier doesn't get trailing zeros.
+  // `den` makes it a ratio (ADR = rev ÷ rooms).
+  const build = (map: Map<string, number>, den?: Map<string, number>): KpiSeries => {
+    const curMonths = Array.from(map.keys())
+      .filter((k) => k.startsWith(`${curYear}|`))
+      .map((k) => k.slice(k.indexOf("|") + 1))
+      .filter(monthFilter)
+      .sort();
+    const series = curMonths.map((mn) => {
+      const n = map.get(`${curYear}|${mn}`) ?? 0;
+      if (!den) return n;
+      const d = den.get(`${curYear}|${mn}`) ?? 0;
+      return d > 0 ? n / d : 0;
+    });
+    const common = curMonths.filter((mn) => map.has(`${prevYear}|${mn}`));
+    if (!common.length) return { cur: null, prev: null, series };
+    const sum = (yr: number, m: Map<string, number>) => common.reduce((s, mn) => s + (m.get(`${yr}|${mn}`) ?? 0), 0);
+    if (den) {
+      const cd = sum(curYear, den), pd = sum(prevYear, den);
+      return { cur: cd > 0 ? sum(curYear, map) / cd : null, prev: pd > 0 ? sum(prevYear, map) / pd : null, series };
+    }
+    return { cur: sum(curYear, map), prev: sum(prevYear, map), series };
+  };
+
+  return {
+    priorLabel: isMonth ? `vs ${monthShort(period)} ${prevYear}` : `vs ${prevYear}`,
+    bookings: build(arrBk),
+    roomNights: build(msRooms),
+    revenue: build(msRev),
+    adr: build(msRev, msRooms),
+  };
+}

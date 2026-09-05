@@ -5,7 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { DimTable, type DimRow } from "@/components/dim-table";
 import { ExportButtons } from "@/components/export-buttons";
 import { getPropertyAnalytics, type Dim } from "@/lib/property-analytics";
-import { getRoomCategoryOccupancy } from "@/lib/analytics";
+import { getRoomCategoryOccupancy, getKpiDeltas } from "@/lib/analytics";
+import { DeltaChip } from "@/components/ui/delta-chip";
+import { Sparkline } from "@/components/sparkline";
 import { formatIDRFull, formatInt, formatPct2, monthShort } from "@/lib/utils";
 import { countryName as cname } from "@/lib/countries";
 
@@ -36,9 +38,10 @@ export default async function PropertyPage({
   const period = searchParams.period ?? "2026";
   const seg = searchParams.seg;
   const agent = searchParams.agent;
-  const [a, rc] = await Promise.all([
+  const [a, rc, kpi] = await Promise.all([
     getPropertyAnalytics(code, period, seg, agent),
     getRoomCategoryOccupancy(code, period),
+    getKpiDeltas(period, code),
   ]);
   if (!a) notFound();
 
@@ -86,16 +89,22 @@ export default async function PropertyPage({
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
-              { label: "Bookings", value: formatInt(a.totals.reservations), sub: "reservations" },
-              { label: "Room nights", value: formatInt(a.totals.roomNights), sub: a.reconciled ? "matched to daily" : "arrival basis" },
-              { label: "Room revenue", value: formatIDRFull(a.totals.revenue), sub: a.reconciled ? "matched to daily totals" : "from reservations" },
-              { label: "ADR", value: formatIDRFull(a.totals.adr) },
+              { label: "Bookings", value: formatInt(a.totals.reservations), sub: "reservations", d: kpi.bookings },
+              { label: "Room nights", value: formatInt(a.totals.roomNights), sub: a.reconciled ? "matched to daily" : "arrival basis", d: kpi.roomNights },
+              { label: "Room revenue", value: formatIDRFull(a.totals.revenue), sub: a.reconciled ? "matched to daily totals" : "from reservations", d: kpi.revenue },
+              { label: "ADR", value: formatIDRFull(a.totals.adr), d: kpi.adr },
             ].map((k) => (
               <Card key={k.label} className="shadow-none">
                 <CardContent className="p-4">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{k.label}</div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{k.label}</div>
+                    <Sparkline data={k.d.series} className={`mt-0.5 shrink-0 ${accent} opacity-60`} />
+                  </div>
                   <div className="mt-1 text-xl font-semibold tabular-nums">{k.value}</div>
-                  {k.sub && <div className="text-xs text-muted-foreground">{k.sub}</div>}
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <DeltaChip current={k.d.cur} previous={k.d.prev} label={kpi.priorLabel ?? undefined} />
+                    {k.sub && <span className="text-xs text-muted-foreground">{k.sub}</span>}
+                  </div>
                 </CardContent>
               </Card>
             ))}
