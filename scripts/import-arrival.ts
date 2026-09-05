@@ -88,10 +88,26 @@ async function main() {
     const H = (rows[hi] || []).map(lc);
     const find = (test: (h: string) => boolean) => H.findIndex(test);
     const noSpace = (h: string) => h.replace(/[^a-z]/g, "");
+    // Reservation id: prefer the "Reservation Number" column. Some months (e.g.
+    // Nov 2025) also have a "Reservation Name" column that must NOT be used as the
+    // id — it holds the agent name — so exclude any "…name" match here.
+    const findResId = () => {
+      let c = find((h) => noSpace(h).includes("reservationnumber") || noSpace(h).includes("resno"));
+      if (c < 0) c = find((h) => h.includes("reservation") && !h.includes("name"));
+      if (c < 0) c = find((h) => h.includes("reservation"));
+      return c;
+    };
+    // Agent/company: the usual "Company / Agent Name" column, else the Nov-2025
+    // template which carries the agent under "Reservation Name".
+    const findAgent = () => {
+      let c = find((h) => h.includes("company") || h.includes("agent") || h.includes("/ta"));
+      if (c < 0) c = find((h) => h.includes("reservation name"));
+      return c;
+    };
     const ci = {
-      resId: find((h) => h.includes("reservation") || noSpace(h).includes("resno")),
+      resId: findResId(),
       guest: find((h) => h.includes("guest")),
-      agent: find((h) => h.includes("company") || h.includes("agent") || h.includes("/ta")),
+      agent: findAgent(),
       stay: find((h) => h === "stay" || h.startsWith("stay")),
       arr: find((h) => h.includes("arrival")),
       dep: find((h) => h.includes("departure")),
@@ -100,8 +116,11 @@ async function main() {
     let natCol = find((h) => h.startsWith("nat"));
     if (natCol < 0) natCol = find((h) => h === "region");
     if (natCol < 0) natCol = find((h) => h === "co" || h === "country");
-    let rateCol = find((h) => noSpace(h).includes("roomrate"));
-    if (rateCol < 0) rateCol = find((h) => h.includes("rate") && !h.includes("plan") && !h.includes("code"));
+    // Room rate must be PER NIGHT (revenue = rate × nights). Skip stay-total and
+    // USD columns — the Nov-2025 template has "Total Room Rate" (whole-stay) and
+    // "Room Rate (USD)" alongside the per-night "Average Room Rate".
+    let rateCol = find((h) => noSpace(h).includes("roomrate") && !h.includes("total") && !h.includes("usd"));
+    if (rateCol < 0) rateCol = find((h) => h.includes("rate") && !h.includes("plan") && !h.includes("code") && !h.includes("total") && !h.includes("usd"));
 
     // Pass 1: collect per-room records, grouped by reservation id.
     const groups = new Map<string, Rec[]>();
