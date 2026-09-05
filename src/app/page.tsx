@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TrendingUp } from "lucide-react";
-import { getOverview, getForwardOtbAll, getKpiDeltas, getBriefing, type PropertyPerf, type PropertyOtb, type KpiSeries } from "@/lib/analytics";
+import { getOverview, getForwardOtbAll, getForwardLook, getKpiDeltas, getBriefing, type PropertyPerf, type PropertyOtb, type KpiSeries, type PropertyPace } from "@/lib/analytics";
 import { ExportButtons } from "@/components/export-buttons";
 import { DeltaChip } from "@/components/ui/delta-chip";
 import { Sparkline } from "@/components/sparkline";
@@ -82,6 +82,28 @@ function Kpi({ label, value, sub, d, priorLabel }: { label: string; value: strin
       </CardContent>
     </Card>
   );
+}
+
+// Forward booking pace vs last year, as a compact ± points tag. Green ahead, red
+// behind — but only once the gap is worth acting on (≥5 pts); muted otherwise.
+function PaceTag({ delta }: { delta: number | null | undefined }) {
+  if (delta == null) return <span className="text-muted-foreground">—</span>;
+  const strong = Math.abs(delta) >= 5;
+  const tone = !strong ? "text-muted-foreground" : delta > 0 ? "text-emerald-600" : "text-red-600";
+  const arrow = Math.abs(delta) < 0.5 ? "–" : delta > 0 ? "▲" : "▼";
+  return (
+    <span className={`whitespace-nowrap font-medium tabular-nums ${tone}`}>
+      <span className="text-[9px]">{arrow}</span> {delta > 0 ? "+" : ""}{delta.toFixed(0)}
+    </span>
+  );
+}
+
+// A one-line pace verdict for the card header.
+function PaceBadge({ avg }: { avg: number | null | undefined }) {
+  if (avg == null) return null;
+  if (avg >= 5) return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600">▲ ahead of last year</span>;
+  if (avg <= -5) return <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-600">▼ behind pace</span>;
+  return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">on pace</span>;
 }
 
 function PropertyCard({ p }: { p: PropertyPerf }) {
@@ -166,6 +188,22 @@ export default async function Home() {
     /* on-the-books data optional */
   }
   const hasForward = forward.some((p) => p.months.length > 0);
+
+  // Forward booking pace vs same time last year — used to flag whether the
+  // on-the-books occupancy is actually ahead or behind, not just its level.
+  let pace: PropertyPace[] = [];
+  try {
+    pace = await getForwardLook();
+  } catch {
+    /* pace optional */
+  }
+  const paceDelta = new Map<string, number>(); // "CODE|YYYY-MM" → pts vs LY
+  for (const p of pace) for (const m of p.months) if (m.delta != null) paceDelta.set(`${p.code}|${m.month}`, m.delta);
+  const paceAvg = new Map<string, number>(); // "CODE" → mean forward delta
+  for (const p of pace) {
+    const ds = p.months.map((m) => m.delta).filter((d): d is number => d != null);
+    if (ds.length) paceAvg.set(p.code, ds.reduce((a, b) => a + b, 0) / ds.length);
+  }
 
   let kpi: Awaited<ReturnType<typeof getKpiDeltas>> | null = null;
   try {
@@ -283,7 +321,10 @@ export default async function Home() {
                     <Card key={p.code} className="relative overflow-hidden">
                       <div className={`absolute inset-y-0 left-0 w-1 ${ACCENT[p.code]?.bar ?? "bg-primary"}`} />
                       <CardHeader className="pb-2">
-                        <CardTitle className="text-base">{p.code}</CardTitle>
+                        <div className="flex items-center justify-between gap-2">
+                          <CardTitle className="text-base">{p.code}</CardTitle>
+                          <PaceBadge avg={paceAvg.get(p.code)} />
+                        </div>
                         <CardDescription>On-the-books occupancy · ADR · revenue</CardDescription>
                       </CardHeader>
                       <CardContent>
@@ -292,6 +333,7 @@ export default async function Home() {
                             <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
                               <th className="text-left font-medium">Month</th>
                               <th className="text-right font-medium">Occ</th>
+                              <th className="text-right font-medium" title="Booking pace vs same time last year (points)">vs LY</th>
                               <th className="text-right font-medium">ADR</th>
                               <th className="text-right font-medium">Revenue</th>
                             </tr>
@@ -301,6 +343,7 @@ export default async function Home() {
                               <tr key={m.month} className="border-t border-border/40">
                                 <td className="py-1">{monthShort(m.month)}</td>
                                 <td className="py-1 text-right font-medium tabular-nums">{m.otbOcc != null ? `${m.otbOcc.toFixed(1)}%` : "—"}</td>
+                                <td className="py-1 text-right"><PaceTag delta={paceDelta.get(`${p.code}|${m.month}`)} /></td>
                                 <td className="py-1 text-right tabular-nums text-muted-foreground">{m.otbAdr != null ? formatIDRFull(m.otbAdr) : "—"}</td>
                                 <td className="py-1 text-right tabular-nums text-muted-foreground">{m.otbRevenue != null ? formatIDRFull(m.otbRevenue) : "—"}</td>
                               </tr>
@@ -316,7 +359,9 @@ export default async function Home() {
                 </div>
                 <p className="text-xs text-muted-foreground">
                   On-the-books = confirmed occupancy, ADR &amp; net revenue for each upcoming month, taken from the latest PU sheet&apos;s
-                  Occ on Hand line. Revenue is the plan&apos;s net figure.
+                  Occ on Hand line. Revenue is the plan&apos;s net figure. <span className="font-medium">vs LY</span> is the booking pace
+                  in occupancy points against the same time last year — <span className="text-emerald-600">green</span> is ahead,
+                  <span className="text-red-600"> red</span> is behind by 5+ points and worth a look at rates.
                 </p>
               </section>
             )}
