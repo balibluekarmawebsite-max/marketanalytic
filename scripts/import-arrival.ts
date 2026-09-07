@@ -34,6 +34,56 @@ type Rec = {
 };
 
 const lc = (v: unknown) => String(v ?? "").toLowerCase().trim();
+// Some month templates print an "=====" separator row under the header; it must
+// not be read as a booking.
+const isSep = (v: unknown) => /^=+$/.test(String(v ?? "").replace(/\s/g, ""));
+// Normalize a room number to its code: last whitespace-separated token, upper-cased.
+// Handles clean codes ("ROS", "504") and misaligned cells ("0 ROS" → "ROS").
+const roomCode = (v: unknown) => (String(v ?? "").trim().toUpperCase().split(/\s+/).pop() ?? "");
+
+/**
+ * Pre-scan every sheet to learn each property's room-number → room-type code from
+ * the months that carry both columns. A few 2025 months (Apr/Jun/Jul) list only
+ * the room number, not the type — this map lets us recover their room type from
+ * the physical room, since the codes are stable across months.
+ */
+function buildRmnoMap(wb: XLSX.WorkBook): Map<string, Map<string, string>> {
+  const counts = new Map<string, Map<string, Map<string, number>>>(); // prop → rmno → type → n
+  for (const sn of wb.SheetNames) {
+    const meta = parseReservationSheet(sn);
+    if (!meta) continue;
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[sn], { header: 1, raw: true, defval: null });
+    let hi = 0, hiScore = -1;
+    for (let i = 0; i < Math.min(12, rows.length); i++) { const sc = scoreHeader(rows[i] || []); if (sc > hiScore) { hiScore = sc; hi = i; } }
+    if (hiScore < 3) continue;
+    const H = (rows[hi] || []).map(lc);
+    const noSpace = (h: string) => h.replace(/[^a-z]/g, "");
+    const rmnoCol = H.findIndex((h) => noSpace(h).includes("rmno") || h.includes("room number"));
+    const rtCol = H.findIndex((h) => h.includes("room type") || h.includes("rmcat") || h === "roomtype" || h.includes("room cat"));
+    if (rmnoCol < 0 || rtCol < 0) continue;
+    for (let i = hi + 1; i < rows.length; i++) {
+      const r = rows[i] || [];
+      const rn = roomCode(r[rmnoCol]);
+      const rt = r[rtCol];
+      if (!rn || isSep(rn) || rt == null || isSep(rt) || !String(rt).trim()) continue;
+      const pm = counts.get(meta.property) ?? new Map(); counts.set(meta.property, pm);
+      const rm = pm.get(rn) ?? new Map(); pm.set(rn, rm);
+      const t = String(rt).trim();
+      rm.set(t, (rm.get(t) ?? 0) + 1);
+    }
+  }
+  const out = new Map<string, Map<string, string>>();
+  for (const [prop, pm] of Array.from(counts)) {
+    const m = new Map<string, string>();
+    for (const [rn, rm] of Array.from(pm)) {
+      let best = "", bestN = -1;
+      for (const [t, n] of Array.from(rm)) if (n > bestN) { best = t; bestN = n; }
+      m.set(rn, best);
+    }
+    out.set(prop, m);
+  }
+  return out;
+}
 
 function scoreHeader(cells: unknown[]): number {
   const h = cells.map(lc);
@@ -62,6 +112,7 @@ async function main() {
   if (!file) throw new Error("Usage: tsx scripts/import-arrival.ts <arrival.xlsx>");
 
   const wb = XLSX.readFile(file, { cellDates: true });
+  const rmnoMap = buildRmnoMap(wb); // room number → room-type code, per property
   const facts = new Map<string, Fact>();
   const skipped: string[] = [];
   let sheetsUsed = 0, totRes = 0, totNights = 0, totRev = 0;
@@ -111,7 +162,8 @@ async function main() {
       stay: find((h) => h === "stay" || h.startsWith("stay")),
       arr: find((h) => h.includes("arrival")),
       dep: find((h) => h.includes("departure")),
-      rt: find((h) => h.includes("room type") || h === "rmcat" || h === "roomtype" || h.includes("room cat")),
+      rt: find((h) => h.includes("room type") || h.includes("rmcat") || h === "roomtype" || h.includes("room cat")),
+      rmno: find((h) => noSpace(h).includes("rmno") || h.includes("room number")),
     };
     let natCol = find((h) => h.startsWith("nat"));
     if (natCol < 0) natCol = find((h) => h === "region");
@@ -129,13 +181,19 @@ async function main() {
       const resIdRaw = ci.resId >= 0 ? r[ci.resId] : null;
       const guest = ci.guest >= 0 ? r[ci.guest] : null;
       if ((resIdRaw == null || resIdRaw === "") && (guest == null || guest === "")) continue;
+      if (isSep(resIdRaw) || isSep(guest)) continue; // "=====" separator row
 
       const nat = natCol >= 0 && r[natCol] ? String(r[natCol]).trim().toUpperCase().slice(0, 3) : null;
       const agentRaw = ci.agent >= 0 && r[ci.agent] ? String(r[ci.agent]) : null;
       let stay = cleanNum(ci.stay >= 0 ? r[ci.stay] : null);
       if (stay == null || stay < 1 || stay > 120) stay = nightsFromDates(ci.arr >= 0 ? r[ci.arr] : null, ci.dep >= 0 ? r[ci.dep] : null) ?? 1;
       const rate = cleanNum(rateCol >= 0 ? r[rateCol] : null);
-      const { base, name } = normalizeRoomType(meta.property, ci.rt >= 0 ? r[ci.rt] : null);
+      // Room type from the sheet's own column; if it has none (some 2025 months),
+      // recover it from the room number via the cross-month map.
+      const rtRaw = ci.rt >= 0 ? r[ci.rt] : null;
+      const rmnoVal = ci.rmno >= 0 ? roomCode(r[ci.rmno]) : "";
+      const rtValue = rtRaw != null && String(rtRaw).trim() && !isSep(rtRaw) ? rtRaw : (rmnoVal ? rmnoMap.get(meta.property)?.get(rmnoVal) ?? null : null);
+      const { base, name } = normalizeRoomType(meta.property, rtValue);
 
       const resId = resIdRaw != null && resIdRaw !== "" ? String(resIdRaw) : `__r${i}`;
       const rec: Rec = { resId, base, roomName: name, nat, segment: normalizeSegment(agentRaw), agent: cleanAgent(agentRaw), stay, revenue: rate ? rate * stay : 0 };
