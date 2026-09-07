@@ -49,6 +49,7 @@ export default async function PropertyPage({
   const accent = ACCENT[code] ?? "text-primary";
   const bar = BAR[code] ?? "bg-primary";
   const maxCell = Math.max(1, ...a.matrix.flatMap((m) => m.byMonth));
+  const maxSegCell = Math.max(1, ...a.segMatrix.flatMap((m) => m.byMonth));
   const ctx = agent ? `&agent=${encodeURIComponent(agent)}` : seg ? `&seg=${encodeURIComponent(seg)}` : "";
   const segHref = (k: string) => `/p/${code}?period=${period}&seg=${encodeURIComponent(k)}`;
   const agentHref = (k: string) => `/p/${code}?period=${period}&agent=${encodeURIComponent(k)}`;
@@ -276,6 +277,40 @@ export default async function PropertyPage({
                 </table>
               </CardContent>
             </Card>
+          </section>
+        )}
+
+        {/* Segment × month */}
+        {a.periodMonths.length > 1 && a.segMatrix.length > 0 && (
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">Segment by month <span className="text-sm font-normal text-muted-foreground">(room nights)</span></h2>
+            <Card>
+              <CardContent className="overflow-x-auto pt-6">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                      <th className="py-1 text-left font-medium">Segment</th>
+                      {a.periodMonths.map((m) => <th key={m} className="px-1 py-1 text-right font-medium tabular-nums">{monthShort(m)}</th>)}
+                      <th className="py-1 pl-2 text-right font-medium">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {a.segMatrix.map((row) => (
+                      <tr key={row.seg} className="border-t border-border/40">
+                        <td className="py-1.5 pr-2 font-medium">
+                          <Link href={segHref(row.seg)} className="text-primary hover:underline">{row.seg}</Link>
+                        </td>
+                        {row.byMonth.map((v, i) => (
+                          <td key={i} className="px-1 py-1.5 text-right tabular-nums" style={{ backgroundColor: v > 0 ? `rgba(2,132,199,${(0.1 + 0.6 * (v / maxSegCell)).toFixed(3)})` : undefined }}>{v || ""}</td>
+                        ))}
+                        <td className="py-1.5 pl-2 text-right font-semibold tabular-nums">{formatInt(row.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+            <p className="text-xs text-muted-foreground">Room nights by market segment across the period — spot which segments carry which months. Click a segment to drill in.</p>
           </section>
         )}
 

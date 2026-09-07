@@ -42,6 +42,7 @@ export type PropertyAnalytics = {
   roomTypes: Dim[];
   segTop: (Dim & { tops: { key: string; reservations: number }[] })[];
   matrix: { nat: string; byMonth: number[]; total: number }[];
+  segMatrix: { seg: string; byMonth: number[]; total: number }[];
   segmentDetail: SegmentDetail | null;
   agentDetail: AgentDetail | null;
 };
@@ -152,6 +153,12 @@ export async function getPropertyAnalytics(
     return { nat, byMonth, total: byMonth.reduce((a, b) => a + b, 0) };
   });
 
+  // Segment × month room-nights (seasonality), same shape as the nationality one.
+  const segMatrix = segments.slice(0, 8).map((s) => {
+    const byMonth = periodMonths.map((m) => Math.round(rows.filter((f) => segOf(f) === s.key && ym(f.month) === m).reduce((sum, f) => sum + nightsOf(f), 0)));
+    return { seg: s.key, byMonth, total: byMonth.reduce((a, b) => a + b, 0) };
+  });
+
   let segmentDetail: SegmentDetail | null = null;
   if (seg) {
     const sr = rows.filter((f) => segOf(f) === seg);
@@ -184,6 +191,6 @@ export async function getPropertyAnalytics(
   return {
     code, name: prop.name, city: prop.city, period, periodLabel,
     monthsAll, periodMonths, totals, reconciled,
-    nationalities, segments, agents, roomTypes, segTop, matrix, segmentDetail, agentDetail,
+    nationalities, segments, agents, roomTypes, segTop, matrix, segMatrix, segmentDetail, agentDetail,
   };
 }
