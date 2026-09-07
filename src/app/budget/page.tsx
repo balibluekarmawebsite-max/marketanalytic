@@ -33,6 +33,49 @@ function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: 
   );
 }
 
+// Traffic-light tint for an achievement % (actual ÷ budget): green on/above
+// budget, amber within 10%, red below.
+function achChip(pct: number | null): string {
+  if (pct == null) return "bg-muted text-muted-foreground ring-transparent";
+  if (pct >= 100) return "bg-emerald-500/15 text-emerald-700 ring-emerald-500/30";
+  if (pct >= 90) return "bg-amber-400/20 text-amber-700 ring-amber-400/40";
+  return "bg-rose-500/15 text-rose-700 ring-rose-500/30";
+}
+
+// One row of month chips for a single metric — the at-a-glance layer above the
+// detail table. Each chip is tinted by that month's achievement; the tail shows
+// how many months landed on budget and names the weakest.
+function StatusStrip({ label, months, get }: { label: string; months: MonthBvA[]; get: (r: MonthBvA) => number | null }) {
+  const withBoth = months.filter((r) => get(r) != null);
+  const onBudget = withBoth.filter((r) => (get(r) as number) >= 100).length;
+  const weakest = withBoth.reduce<MonthBvA | null>((w, r) => (w == null || (get(r) as number) < (get(w) as number) ? r : w), null);
+  const wPct = weakest ? get(weakest) : null;
+  return (
+    <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center">
+      <div className="w-24 shrink-0 text-sm font-medium">{label}</div>
+      <div className="flex flex-wrap gap-1">
+        {months.map((r) => {
+          const pct = get(r);
+          return (
+            <div
+              key={r.month}
+              title={`${monthShort(r.month)} ${r.month.slice(0, 4)} · ${pct == null ? "no data" : `${pct.toFixed(0)}% of budget`}`}
+              className={`flex w-[52px] flex-col items-center rounded-md px-1 py-1 text-center ring-1 ${achChip(pct)}`}
+            >
+              <span className="text-[10px] uppercase tracking-wide opacity-70">{monthShort(r.month)}</span>
+              <span className="text-xs font-semibold tabular-nums">{pct == null ? "—" : `${pct.toFixed(0)}%`}</span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="text-xs text-muted-foreground sm:ml-auto sm:whitespace-nowrap sm:text-right">
+        <span className="font-medium text-foreground">{onBudget}/{withBoth.length}</span> on budget
+        {weakest && wPct != null && wPct < 100 ? <> · weakest {monthShort(weakest.month)} {wPct.toFixed(0)}%</> : null}
+      </div>
+    </div>
+  );
+}
+
 const occ = (v: number | null) => (v == null ? "—" : formatPct2(v));
 const idr = (v: number | null) => (v == null ? "—" : formatIDRFull(v));
 const int = (v: number | null) => (v == null ? "—" : formatInt(v));
@@ -113,6 +156,27 @@ export default async function BudgetPage({ searchParams }: { searchParams: { p?:
                 the gross daily room revenue on the dashboard). Green ≥ 100% of budget, amber ≥ 90%, red below.
               </p>
             </div>
+
+            {/* At-a-glance: months on / off budget per metric */}
+            {m.months.length > 1 && (
+              <section className="space-y-3">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h2 className="text-lg font-semibold">Where we stand <span className="text-sm font-normal text-muted-foreground">· months on / off budget</span></h2>
+                  <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                    <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-500/60" /> ≥100%</span>
+                    <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-amber-400/70" /> 90–99%</span>
+                    <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-rose-500/60" /> &lt;90%</span>
+                  </div>
+                </div>
+                <Card>
+                  <CardContent className="space-y-2.5 pt-6">
+                    <StatusStrip label="Occupancy" months={m.months} get={(r) => r.occAchieved} />
+                    <StatusStrip label="ADR (rate)" months={m.months} get={(r) => (r.budgetAdr && r.actualAdr ? (r.actualAdr / r.budgetAdr) * 100 : null)} />
+                    <StatusStrip label="Revenue" months={m.months} get={(r) => r.revAchieved} />
+                  </CardContent>
+                </Card>
+              </section>
+            )}
 
             {/* Monthly budget vs actual */}
             <section className="space-y-3">
