@@ -116,13 +116,130 @@ async function guestSheets(code: string, period: string): Promise<Sheet[]> {
   ];
 }
 
-// Same guest breakdowns, but one row per (month, value) so each month is separate.
-// Every sheet carries a leading Month column; pivot on it in Excel.
+// Pivot layout for the monthly split: the dimension runs down the side, the
+// months run across the top, with margin totals. Each metric gets its own
+// matrix, stacked with a title and a blank spacer — far easier to read than one
+// repeating row per (month, value).
+const monthTag = (m: string) => `${monthShort(m)} ${m.slice(0, 4)}`;
+
+type MonthDims = { m: string; dims: Dim[] };
+type MonthRc = { m: string; rc: Awaited<ReturnType<typeof getRoomCategoryOccupancy>> };
+
+function pivotByMonth(
+  sheetName: string,
+  dimLabel: string,
+  ctx: string,
+  months: string[],
+  perMonth: MonthDims[],
+  nameFn?: (k: string) => string,
+  cap?: number,
+): Sheet {
+  const metrics: { label: string; of: (d: Dim) => number }[] = [
+    { label: "Revenue (IDR)", of: (d) => Math.round(d.revenue) },
+    { label: "Room nights", of: (d) => Math.round(d.roomNights) },
+    { label: "Bookings", of: (d) => d.reservations },
+  ];
+
+  // key -> month -> Dim, plus a revenue total per key for ranking / capping.
+  const byKey = new Map<string, Map<string, Dim>>();
+  const revByKey = new Map<string, number>();
+  for (const { m, dims } of perMonth) {
+    for (const d of dims) {
+      const mm = byKey.get(d.key) ?? new Map<string, Dim>();
+      mm.set(m, d); byKey.set(d.key, mm);
+      revByKey.set(d.key, (revByKey.get(d.key) ?? 0) + d.revenue);
+    }
+  }
+  let keys = Array.from(revByKey.entries()).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  let otherKeys: string[] = [];
+  if (cap != null && keys.length > cap) { otherKeys = keys.slice(cap); keys = keys.slice(0, cap); }
+
+  const disp = (k: string) => (nameFn ? nameFn(k) : k);
+  const valAt = (of: (d: Dim) => number, k: string, m: string) => { const d = byKey.get(k)?.get(m); return d ? of(d) : 0; };
+
+  const aoa: Cell[][] = [[`${dimLabel} — production by month`], [ctx], []];
+  for (const metric of metrics) {
+    aoa.push([metric.label]);
+    aoa.push([dimLabel, ...months.map(monthTag), "Total"]);
+    for (const k of keys) {
+      const vals = months.map((m) => valAt(metric.of, k, m));
+      aoa.push([disp(k), ...vals, vals.reduce((a, b) => a + b, 0)]);
+    }
+    if (otherKeys.length) {
+      const vals = months.map((m) => otherKeys.reduce((s, k) => s + valAt(metric.of, k, m), 0));
+      aoa.push([`Other (${otherKeys.length} more)`, ...vals, vals.reduce((a, b) => a + b, 0)]);
+    }
+    const colTot = months.map((m) => keys.reduce((s, k) => s + valAt(metric.of, k, m), 0) + otherKeys.reduce((s, k) => s + valAt(metric.of, k, m), 0));
+    aoa.push(["Total", ...colTot, colTot.reduce((a, b) => a + b, 0)]);
+    aoa.push([]);
+  }
+  return { name: sheetName.slice(0, 31), aoa };
+}
+
+function roomCatPivot(sheetName: string, ctx: string, perMonth: MonthRc[]): Sheet {
+  const title = "Room category — production by month";
+  const withData = perMonth.filter((x): x is { m: string; rc: NonNullable<MonthRc["rc"]> } => !!x.rc && x.rc.hasData);
+  if (!withData.length) return { name: sheetName.slice(0, 31), aoa: [[title], [ctx], [], ["No room-type detail for this period."]] };
+
+  const monthsWithData = withData.map((x) => x.m);
+  const cats = withData[0].rc.groups.map((g) => g.label);
+  const cell = new Map<string, Map<string, { sold: number; avail: number; occ: number | null }>>();
+  for (const { m, rc } of withData) {
+    for (const g of rc.groups) {
+      const mm = cell.get(g.label) ?? new Map<string, { sold: number; avail: number; occ: number | null }>();
+      mm.set(m, { sold: g.soldNights, avail: g.availableNights, occ: g.occPct });
+      cell.set(g.label, mm);
+    }
+  }
+  const get = (cat: string, m: string) => cell.get(cat)?.get(m);
+
+  const aoa: Cell[][] = [[title], [ctx], []];
+
+  // Occupancy % — period total recomputed from summed sold/available (averaging % would be wrong).
+  aoa.push(["Occupancy %"]);
+  aoa.push(["Category", ...monthsWithData.map(monthTag), "Total"]);
+  for (const cat of cats) {
+    const vals = monthsWithData.map((m) => { const c = get(cat, m); return c ? r2(c.occ) : null; });
+    let s = 0, a = 0;
+    for (const m of monthsWithData) { const c = get(cat, m); if (c) { s += c.sold; a += c.avail; } }
+    aoa.push([cat, ...vals, a > 0 ? r2((s / a) * 100) : null]);
+  }
+  {
+    const vals = monthsWithData.map((m) => {
+      let s = 0, a = 0;
+      for (const cat of cats) { const c = get(cat, m); if (c) { s += c.sold; a += c.avail; } }
+      return a > 0 ? r2((s / a) * 100) : null;
+    });
+    let S = 0, A = 0;
+    for (const cat of cats) for (const m of monthsWithData) { const c = get(cat, m); if (c) { S += c.sold; A += c.avail; } }
+    aoa.push(["All rooms", ...vals, A > 0 ? r2((S / A) * 100) : null]);
+  }
+  aoa.push([]);
+
+  // Room nights sold.
+  aoa.push(["Room nights sold"]);
+  aoa.push(["Category", ...monthsWithData.map(monthTag), "Total"]);
+  for (const cat of cats) {
+    const vals = monthsWithData.map((m) => { const c = get(cat, m); return c ? c.sold : 0; });
+    aoa.push([cat, ...vals, vals.reduce((a, b) => a + b, 0)]);
+  }
+  {
+    const vals = monthsWithData.map((m) => {
+      let s = 0;
+      for (const cat of cats) { const c = get(cat, m); if (c) s += c.sold; }
+      return s;
+    });
+    aoa.push(["All rooms", ...vals, vals.reduce((a, b) => a + b, 0)]);
+  }
+  return { name: sheetName.slice(0, 31), aoa };
+}
+
+// Same guest breakdowns as guestSheets, but pivoted month-by-month.
 async function guestMonthlySheets(code: string, period: string): Promise<Sheet[]> {
   const base = await getPropertyAnalytics(code, period);
   if (!base || base.periodMonths.length === 0) return [];
   const months = base.periodMonths;
-  const tag = (m: string) => `${monthShort(m)} ${m.slice(0, 4)}`;
+  const ctx = `${base.name} · ${base.periodLabel}`;
 
   // One reconciled read + one room-category read per month, in parallel.
   const per = await Promise.all(
@@ -133,35 +250,19 @@ async function guestMonthlySheets(code: string, period: string): Promise<Sheet[]
     })),
   );
 
-  const dimByMonth = (first: string, sel: (a: PropertyAnalytics) => Dim[], nameFn?: (k: string) => string): Sheet => {
-    const aoa: Cell[][] = [["Month", first, "Bookings", "Room nights", "Revenue (IDR)"]];
-    for (const { m, a } of per) {
-      if (!a) continue;
-      for (const d of sel(a)) aoa.push([tag(m), nameFn ? nameFn(d.key) : d.key, d.reservations, Math.round(d.roomNights), Math.round(d.revenue)]);
-    }
-    return { name: `${first} by month`.slice(0, 31), aoa };
-  };
-
-  const roomCatByMonth = (): Sheet => {
-    const aoa: Cell[][] = [["Month", "Category", "Units", "Room nights sold", "Available room nights", "Occupancy %"]];
-    for (const { m, rc } of per) {
-      if (!rc || !rc.hasData) continue;
-      for (const g of rc.groups) aoa.push([tag(m), g.label, g.units, g.soldNights, g.availableNights, r2(g.occPct)]);
-    }
-    return { name: "Room category by month", aoa };
-  };
+  const dimsOf = (sel: (a: PropertyAnalytics) => Dim[]): MonthDims[] => per.map((x) => ({ m: x.m, dims: x.a ? sel(x.a) : [] }));
 
   return [
-    dimByMonth("Nationality", (a) => a.nationalities, countryName),
-    dimByMonth("Market segment", (a) => a.segments),
-    dimByMonth("Agent", (a) => a.agents),
-    dimByMonth("Room type", (a) => a.roomTypes),
-    roomCatByMonth(),
+    pivotByMonth("Nationality by month", "Nationality", ctx, months, dimsOf((a) => a.nationalities), countryName, 15),
+    pivotByMonth("Market segment by month", "Market segment", ctx, months, dimsOf((a) => a.segments)),
+    pivotByMonth("Agent by month", "Agent", ctx, months, dimsOf((a) => a.agents), undefined, 15),
+    pivotByMonth("Room type by month", "Room type", ctx, months, dimsOf((a) => a.roomTypes)),
+    roomCatPivot("Room category by month", ctx, per.map((x) => ({ m: x.m, rc: x.rc }))),
   ];
 }
 
-/** Build the sheets for a requested dataset. `split: "month"` breaks the guest
- * data out into one row per month instead of a single period aggregate. */
+/** Build the sheets for a requested dataset. `split: "month"` renders the guest
+ * data as month-by-month pivot matrices instead of a single period aggregate. */
 export async function buildExport(dataset: string, params: { p?: string; period?: string; split?: string }): Promise<Workbook | null> {
   const period = params.period || "2026";
   const code = (params.p || "BKDS").toUpperCase();
