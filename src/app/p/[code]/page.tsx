@@ -6,6 +6,7 @@ import { DimTable, type DimRow } from "@/components/dim-table";
 import { ExportButtons } from "@/components/export-buttons";
 import { getPropertyAnalytics, type Dim } from "@/lib/property-analytics";
 import { getRoomCategoryOccupancy, getKpiDeltas } from "@/lib/analytics";
+import { getBookingWindow, BUCKET_LABELS, type LeadBuckets, type LeadGroup } from "@/lib/booking-window";
 import { DeltaChip } from "@/components/ui/delta-chip";
 import { Sparkline } from "@/components/sparkline";
 import { PeriodPicker } from "@/components/period-picker";
@@ -28,6 +29,64 @@ const toRows = (dims: Dim[], nameFn?: (k: string) => string, hrefFn?: (k: string
     revenue: d.revenue,
   }));
 
+// Booking-window distribution bar: five buckets (soonest → farthest) shown as
+// shades of the property accent, widths proportional to each bucket's share.
+const LEAD_OPACITY = [0.92, 0.72, 0.55, 0.4, 0.26];
+function BucketBar({ buckets, bar }: { buckets: LeadBuckets; bar: string }) {
+  const vals = BUCKET_LABELS.map(({ key }) => buckets[key]);
+  const total = vals.reduce((s, v) => s + v, 0) || 1;
+  return (
+    <div className="flex h-3 w-full overflow-hidden rounded bg-muted">
+      {vals.map((v, i) =>
+        v > 0 ? <div key={i} className={bar} style={{ width: `${(v / total) * 100}%`, opacity: LEAD_OPACITY[i] }} title={`${BUCKET_LABELS[i].label}: ${v}`} /> : null,
+      )}
+    </div>
+  );
+}
+
+function LeadStat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <Card className="shadow-none">
+      <CardContent className="p-4">
+        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+        <div className="mt-1 text-xl font-semibold tabular-nums">{value}</div>
+        {sub && <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>}
+      </CardContent>
+    </Card>
+  );
+}
+
+function LeadTable({ first, rows, bar }: { first: string; rows: LeadGroup[]; bar: string }) {
+  return (
+    <Card>
+      <CardContent className="overflow-x-auto pt-6">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b text-[11px] uppercase tracking-wide text-muted-foreground">
+              <th className="py-2 pr-3 text-left font-medium">{first}</th>
+              <th className="px-2 py-2 text-right font-medium">Bookings</th>
+              <th className="px-2 py-2 text-right font-medium">Avg lead</th>
+              <th className="px-3 py-2 text-left font-medium" style={{ minWidth: 190 }}>Booking-window mix</th>
+              <th className="px-2 py-2 text-right font-medium">Last-min</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((g) => (
+              <tr key={g.key} className="border-t border-border/40">
+                <td className="py-2 pr-3 font-medium">{g.key}</td>
+                <td className="px-2 py-2 text-right tabular-nums">{formatInt(g.reservations)}</td>
+                <td className="px-2 py-2 text-right font-semibold tabular-nums">{Math.round(g.avgLead)}d</td>
+                <td className="px-3 py-2"><BucketBar buckets={g.buckets} bar={bar} /></td>
+                <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">{Math.round(g.lastMinutePct)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default async function PropertyPage({
   params, searchParams,
 }: {
@@ -39,10 +98,11 @@ export default async function PropertyPage({
   const period = searchParams.period ?? "2026";
   const seg = searchParams.seg;
   const agent = searchParams.agent;
-  const [a, rc, kpi] = await Promise.all([
+  const [a, rc, kpi, bw] = await Promise.all([
     getPropertyAnalytics(code, period, seg, agent),
     getRoomCategoryOccupancy(code, period),
     getKpiDeltas(period, code),
+    getBookingWindow(code, period),
   ]);
   if (!a) notFound();
 
@@ -198,6 +258,63 @@ export default async function PropertyPage({
             )}
           </section>
         )}
+
+        {/* Booking window (lead time) */}
+        {bw && bw.hasData ? (
+          <section className="space-y-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-lg font-semibold">Booking window <span className="text-sm font-normal text-muted-foreground">· lead time — how far ahead each channel books</span></h2>
+              <span className="text-xs text-muted-foreground">{bw.periodMonths.length} month{bw.periodMonths.length === 1 ? "" : "s"} with booking dates</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <LeadStat label="Average lead time" value={`${Math.round(bw.overall.avgLead)} days`} sub="arrival − booking date" />
+              <LeadStat label="Last-minute" value={`${Math.round(bw.overall.lastMinutePct)}%`} sub="booked within 7 days" />
+              <LeadStat label="Booked 90+ days out" value={`${Math.round(bw.overall.advancePct)}%`} sub="well in advance" />
+              <LeadStat label="Bookings analysed" value={formatInt(bw.overall.reservations)} sub={bw.periodLabel} />
+            </div>
+            <LeadTable first="Market segment" rows={bw.segments} bar={bar} />
+            {bw.agents.length > 1 && (
+              <details className="group">
+                <summary className="cursor-pointer list-none text-sm font-medium text-muted-foreground hover:text-foreground">
+                  <span className="inline-block transition-transform group-open:rotate-90">▸</span> By agent ({bw.agents.length})
+                </summary>
+                <div className="mt-2"><LeadTable first="Agent" rows={bw.agents.slice(0, 12)} bar={bar} /></div>
+              </details>
+            )}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+              <span className="font-medium uppercase tracking-wide">Window</span>
+              {BUCKET_LABELS.map((b, i) => (
+                <span key={b.key} className="flex items-center gap-1">
+                  <span className={`h-2.5 w-2.5 rounded-sm ${bar}`} style={{ opacity: LEAD_OPACITY[i] }} /> {b.label}
+                </span>
+              ))}
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Lead time = arrival date − booking (created) date, per reservation, from the arrival exports that carry a Created&nbsp;Date column.
+              Average is the mean over {formatInt(bw.overall.reservations)} bookings (each capped at 365 days so a stray far-future record can&apos;t distort a channel).
+              &ldquo;Last-minute&rdquo; is the share booked within 7 days of arrival; the mix bar shows the full 0–7 / 8–30 / 31–60 / 61–90 / 90+ day split.
+              Segment is derived from the agent, the same way as elsewhere.
+            </p>
+          </section>
+        ) : bw && bw.monthsAll.length > 0 ? (
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">Booking window <span className="text-sm font-normal text-muted-foreground">· lead time</span></h2>
+            <Card>
+              <CardContent className="py-6 text-center text-sm text-muted-foreground">
+                No booking dates for {bw.periodLabel}. Booking-window data is available for {bw.monthsAll.map((m) => `${monthShort(m)} ${m.slice(0, 4)}`).join(", ")} — pick one of those periods to view it.
+              </CardContent>
+            </Card>
+          </section>
+        ) : bw ? (
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">Booking window <span className="text-sm font-normal text-muted-foreground">· lead time</span></h2>
+            <Card>
+              <CardContent className="py-6 text-center text-sm text-muted-foreground">
+                No booking-window data for {bw.name} yet. It appears here once an arrival export that includes the <span className="font-medium">Created&nbsp;Date</span> column is imported for this property.
+              </CardContent>
+            </Card>
+          </section>
+        ) : null}
 
         {/* Agent drill-down */}
         {ad ? (

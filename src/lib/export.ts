@@ -1,4 +1,5 @@
 import { getOverview, getPropertyComparison, getBudgetVsActualMonthly, getBusinessOverview, getPickupDetail, getRoomCategoryOccupancy } from "@/lib/analytics";
+import { getBookingWindow, type LeadGroup } from "@/lib/booking-window";
 import { getPropertyAnalytics, type Dim, type PropertyAnalytics } from "@/lib/property-analytics";
 import { countryName } from "@/lib/countries";
 import { monthShort } from "@/lib/utils";
@@ -104,6 +105,27 @@ async function roomCategorySheet(code: string, period: string): Promise<Sheet> {
   return { name: `Room category ${code}`.slice(0, 31), aoa };
 }
 
+async function bookingWindowSheet(code: string, period: string): Promise<Sheet> {
+  const bw = await getBookingWindow(code, period);
+  const aoa: Cell[][] = [["Level", "Name", "Bookings", "Avg lead (days)", "0-7d", "8-30d", "31-60d", "61-90d", "90+d", "Last-minute %"]];
+  const row = (level: string, g: LeadGroup): Cell[] => [
+    level, g.key, g.reservations, Math.round(g.avgLead),
+    g.buckets.b0_7, g.buckets.b8_30, g.buckets.b31_60, g.buckets.b61_90, g.buckets.b91plus, r2(g.lastMinutePct),
+  ];
+  if (bw && bw.hasData) {
+    aoa.push(row("All", bw.overall));
+    aoa.push([]);
+    for (const s of bw.segments) aoa.push(row("Segment", s));
+    aoa.push([]);
+    for (const ag of bw.agents) aoa.push(row("Agent", ag));
+    aoa.push([]);
+    aoa.push(["Lead time = arrival date − created (booking) date; each booking capped at 365 days for the average.", "", "Months included", bw.periodMonths.join(", ")]);
+  } else {
+    aoa.push(["No booking-window data for this period — needs arrival exports that include a Created Date column."]);
+  }
+  return { name: "Booking window", aoa };
+}
+
 async function guestSheets(code: string, period: string): Promise<Sheet[]> {
   const a = await getPropertyAnalytics(code, period);
   if (!a) return [];
@@ -113,6 +135,7 @@ async function guestSheets(code: string, period: string): Promise<Sheet[]> {
     dimSheet("Agent", a.agents),
     dimSheet("Room type", a.roomTypes),
     await roomCategorySheet(code, period),
+    await bookingWindowSheet(code, period),
   ];
 }
 

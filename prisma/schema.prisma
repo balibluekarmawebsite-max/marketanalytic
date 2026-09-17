@@ -283,3 +283,24 @@ model ReservationFact {
   @@index([propertyCode, nationality])
   @@index([propertyCode, marketSegment])
 }
+
+// Booking-window (lead time) aggregates — NO guest PII. Grain: property ×
+// arrival-month × agent. Lead time = arrival date − created (booking) date, in
+// days. Segment is derived live from the agent in analytics, matching
+// ReservationFact. Populated from the newer arrival exports that carry a
+// "Created Date" column, so coverage grows as those exports are supplied.
+model BookingWindowFact {
+  id           String   @id @default(cuid())
+  propertyCode String
+  month        DateTime // first day of the arrival month
+  agent        String? // cleaned company/agent label
+  reservations Int      @default(0) // rows with a usable booking window
+  leadDaysSum  Int      @default(0) // Σ lead days (each capped at 365), for the average
+  lead0_7      Int      @default(0) // 0–7 days ahead (last-minute)
+  lead8_30     Int      @default(0) // 8–30 days
+  lead31_60    Int      @default(0) // 31–60 days
+  lead61_90    Int      @default(0) // 61–90 days
+  lead91plus   Int      @default(0) // 91+ days (well in advance)
+
+  @@index([propertyCode, month])
+}
